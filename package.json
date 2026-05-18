@@ -1,0 +1,29 @@
+{
+  "name": "nodejs",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@discordjs/rest": "^2.6.0",
+    "@types/node": "^22.13.11",
+    "axios": "^1.9.0",
+    "better-sqlite3": "^12.6.2",
+    "canvas": "^3.1.2",
+    "chart.js": "^4.5.0",
+    "chartjs-node-canvas": "^5.0.0",
+    "discord-api-types": "^0.38.11",
+    "discord.js": "^14.25.1",
+    "dotenv": "^16.5.0",
+    "node-cron": "^4.2.1",
+    "pm2": "^6.0.14"
+  },
+  "overrides": {
+    "undici": "^7.0.0"
+  }
+}
