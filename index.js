@@ -799,9 +799,11 @@ function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
         );
         stats.push(`⚔️ CS total : ${arrow(playerCs, opponentCs)} **${diff(playerCs, opponentCs)}**`);
 
-        const pPlates = player.challenges?.turretPlatesTaken ?? 0;
-        const oPlates = opponent.challenges?.turretPlatesTaken ?? 0;
-        stats.push(`🏰 Plaques : ${arrow(pPlates, oPlates)} **${pPlates}** vs **${oPlates}**`);
+        // Je retire cette statistiques de l'affichage car depuis la nouvelle saison c'est plus du tt représentatif
+
+        // const pPlates = player.challenges?.turretPlatesTaken ?? 0;
+        // const oPlates = opponent.challenges?.turretPlatesTaken ?? 0;
+        // stats.push(`🏰 Plaques : ${arrow(pPlates, oPlates)} **${pPlates}** vs **${oPlates}**`);
 
         // Solo kills uniquement pour TOP / MIDDLE
         if (role === "TOP" || role === "MIDDLE") {
