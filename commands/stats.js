@@ -12,11 +12,47 @@ const axios = require("axios");
 //  CACHE
 // ─────────────────────────────────────────
 const statsCache = new Map();
-const CACHE_DURATION       = 10 * 60 * 1000; // 10 min — stats ranked
-const MASTERY_CACHE_DURATION = 30 * 60 * 1000; // 30 min — maîtrise (rarement change)
+const CACHE_DURATION         = 10 * 60 * 1000;
+const MASTERY_CACHE_DURATION = 30 * 60 * 1000;
 const CACHE_CLEANUP_INTERVAL = 15 * 60 * 1000;
 
-// Nettoyage automatique
+// Version du patch DDragon (mise à jour automatique)
+let cachedPatchVersion = "15.10.1"; // Fallback
+
+async function fetchLatestPatchVersion() {
+    try {
+        const res = await axios.get(
+            "https://ddragon.leagueoflegends.com/api/versions.json",
+            { timeout: 5_000 }
+        );
+        cachedPatchVersion = res.data[0];
+    } catch {
+        // Garde le fallback silencieusement
+    }
+}
+
+// Appel au démarrage + refresh toutes les 24h
+fetchLatestPatchVersion();
+setInterval(fetchLatestPatchVersion, 24 * 60 * 60 * 1000);
+
+// ─────────────────────────────────────────
+//  HELPER — URL ICÔNE DE PROFIL
+// ─────────────────────────────────────────
+
+/**
+ * Construit l'URL de l'icône de profil.
+ *  profileIconId = 0 est une icône VALIDE (falsy en JS),
+ *    on utilise typeof pour éviter de la traiter comme absente.
+ */
+function buildProfileIconUrl(profileIconId) {
+    if (typeof profileIconId === "number" && profileIconId >= 0) {
+        return `https://ddragon.leagueoflegends.com/cdn/${cachedPatchVersion}/img/profileicon/${profileIconId}.png`;
+    }
+    // Icône générique par défaut
+    return `https://ddragon.leagueoflegends.com/cdn/${cachedPatchVersion}/img/profileicon/29.png`;
+}
+
+// Nettoyage automatique du cache
 setInterval(() => {
     const now = Date.now();
     for (const [key, value] of statsCache.entries()) {
@@ -44,14 +80,13 @@ module.exports = {
         try {
             await interaction.deferReply();
         } catch {
-            return; // Interaction déjà expirée
+            return;
         }
 
         if (!global.db) {
             return interaction.editReply("❌ Base de données indisponible").catch(() => {});
         }
 
-        // ── Résolution du joueur cible ──────────────────────────────────────
         let targetPlayer = null;
         const rankOption = interaction.options.getInteger("rang");
 
@@ -69,7 +104,6 @@ module.exports = {
             }
         }
 
-        // ── Récupération parallèle des données ─────────────────────────────
         try {
             const [playerStats, matchAnalysis, serverPosition] = await Promise.all([
                 getPlayerCurrentStats(targetPlayer),
@@ -86,7 +120,6 @@ module.exports = {
             );
 
             const actionRow = createInteractiveButtons(targetPlayer);
-
             await interaction.editReply({ embeds: [embed], components: [actionRow] });
 
         } catch (error) {
@@ -98,12 +131,8 @@ module.exports = {
 };
 
 // ─────────────────────────────────────────
-//  RÉCUPÉRATION DES JOUEURS (DB — synchrone better-sqlite3)
+//  RÉCUPÉRATION DES JOUEURS (DB)
 // ─────────────────────────────────────────
-
-/**
- * Retourne le joueur à la position `position` dans le classement du serveur.
- */
 function getPlayerByRank(position, guildId) {
     const rows = global.db
         .prepare(`SELECT * FROM players WHERE guild_id = ?`)
@@ -114,7 +143,7 @@ function getPlayerByRank(position, guildId) {
     rows.sort((a, b) => {
         const rA = getRankOrder(a.last_rank, a.last_lp);
         const rB = getRankOrder(b.last_rank, b.last_lp);
-        if (rB.order !== rA.order)           return rB.order - rA.order;
+        if (rB.order !== rA.order) return rB.order - rA.order;
         if (rB.divisionOrder !== rA.divisionOrder) return rB.divisionOrder - rA.divisionOrder;
         return (rB.lp || 0) - (rA.lp || 0);
     });
@@ -122,9 +151,6 @@ function getPlayerByRank(position, guildId) {
     return rows[position - 1] ?? null;
 }
 
-/**
- * Retourne le joueur lié au compte Discord `userId` sur le serveur `guildId`.
- */
 function getLinkedPlayer(userId, guildId) {
     return global.db
         .prepare(`
@@ -135,9 +161,6 @@ function getLinkedPlayer(userId, guildId) {
         .get(userId, guildId) ?? null;
 }
 
-/**
- * Retourne la position du joueur dans le classement du serveur.
- */
 function getServerPosition(targetRiotId, guildId) {
     const rows = global.db
         .prepare(`SELECT riot_id, last_rank, last_lp FROM players WHERE guild_id = ?`)
@@ -148,13 +171,13 @@ function getServerPosition(targetRiotId, guildId) {
     rows.sort((a, b) => {
         const rA = getRankOrder(a.last_rank, a.last_lp);
         const rB = getRankOrder(b.last_rank, b.last_lp);
-        if (rB.order !== rA.order)           return rB.order - rA.order;
+        if (rB.order !== rA.order) return rB.order - rA.order;
         if (rB.divisionOrder !== rA.divisionOrder) return rB.divisionOrder - rA.divisionOrder;
         return (rB.lp || 0) - (rA.lp || 0);
     });
 
-    const position = rows.findIndex((p) => p.riot_id === targetRiotId) + 1;
-    const total    = rows.length;
+    const position   = rows.findIndex((p) => p.riot_id === targetRiotId) + 1;
+    const total      = rows.length;
     const percentile = total > 0 ? Math.round((position / total) * 100) : 0;
 
     return { position, total, percentile };
@@ -165,21 +188,20 @@ function getServerPosition(targetRiotId, guildId) {
 // ─────────────────────────────────────────
 async function getPlayerCurrentStats(player) {
     const cacheKey = `current_${player.puuid}`;
-    const cached = statsCache.get(cacheKey);
+    const cached   = statsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_DURATION) return cached.data;
 
     const RIOT_API_KEY = process.env.RIOT_API_KEY;
 
     try {
-        // Deux appels en parallèle : summoner + ranked
         const [summonerRes, rankedRes] = await Promise.all([
             axios.get(
                 `https://euw1.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${player.puuid}`,
-                { headers: { "X-Riot-Token": RIOT_API_KEY } }
+                { headers: { "X-Riot-Token": RIOT_API_KEY }, timeout: 10_000 }
             ),
             axios.get(
                 `https://euw1.api.riotgames.com/lol/league/v4/entries/by-puuid/${player.puuid}`,
-                { headers: { "X-Riot-Token": RIOT_API_KEY } }
+                { headers: { "X-Riot-Token": RIOT_API_KEY }, timeout: 10_000 }
             ),
         ]);
 
@@ -190,6 +212,8 @@ async function getPlayerCurrentStats(player) {
         const result = {
             summoner: {
                 ...summoner,
+                // profileIconId est garanti présent ici (même si 0)
+                profileIconId: summoner.profileIconId,
                 displayName: summoner.gameName
                     ? `${summoner.gameName}#${summoner.tagLine}`
                     : (summoner.name || player.riot_id),
@@ -197,8 +221,8 @@ async function getPlayerCurrentStats(player) {
             ranked:      soloQData,
             currentRank: soloQData ? `${soloQData.tier} ${soloQData.rank}` : "UNRANKED",
             currentLP:   soloQData?.leaguePoints ?? 0,
-            wins:        soloQData?.wins  ?? 0,
-            losses:      soloQData?.losses ?? 0,
+            wins:        soloQData?.wins          ?? 0,
+            losses:      soloQData?.losses        ?? 0,
             winrate:     totalGames > 0 ? Math.round((soloQData.wins / totalGames) * 100) : 0,
             isLocal:     false,
         };
@@ -218,7 +242,6 @@ async function getPlayerCurrentStats(player) {
             isLocal: true,
         };
 
-        // Cache l'erreur 1 minute seulement pour ne pas bloquer longtemps
         statsCache.set(cacheKey, {
             data: fallback,
             timestamp: Date.now() - (CACHE_DURATION - 60_000),
@@ -233,18 +256,17 @@ async function getPlayerCurrentStats(player) {
 // ─────────────────────────────────────────
 function getMatchAnalysis(player) {
     const cacheKey = `analysis_${player.id}`;
-    const cached = statsCache.get(cacheKey);
+    const cached   = statsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_DURATION) return cached.data;
 
-    // ── Agrégats globaux ────────────────────────────────────────────────────
     const agg = global.db.prepare(`
         SELECT
-            COUNT(*)                                       AS total_games,
-            SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END)      AS wins,
-            AVG(kills)                                     AS avg_kills,
-            AVG(deaths)                                    AS avg_deaths,
-            AVG(assists)                                   AS avg_assists,
-            SUM(lp_change)                                 AS total_lp_change
+            COUNT(*)                                  AS total_games,
+            SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END) AS wins,
+            AVG(kills)                                AS avg_kills,
+            AVG(deaths)                               AS avg_deaths,
+            AVG(assists)                              AS avg_assists,
+            SUM(lp_change)                            AS total_lp_change
         FROM (
             SELECT win, kills, deaths, assists, lp_change
             FROM match_history
@@ -254,7 +276,7 @@ function getMatchAnalysis(player) {
         )
     `).get(player.id) ?? {};
 
-    // ── Calcul de la série en cours ─────────────────────────────────────────
+    // Calcul de la série en cours
     const recentMatches = global.db.prepare(`
         SELECT win FROM match_history
         WHERE player_id = ?
@@ -268,19 +290,17 @@ function getMatchAnalysis(player) {
     if (recentMatches.length > 0) {
         const firstResult = recentMatches[0].win;
         streakType = firstResult ? "win" : "loss";
-
         for (const match of recentMatches) {
             if (Boolean(match.win) === Boolean(firstResult)) currentStreak++;
             else break;
         }
     }
 
-    // ── Construction de l'objet d'analyse ──────────────────────────────────
-    const totalGames    = agg.total_games ?? 0;
-    const wins          = agg.wins        ?? 0;
-    const avgKDANum     = (agg.avg_deaths ?? 0) > 0
+    const totalGames = agg.total_games ?? 0;
+    const wins       = agg.wins        ?? 0;
+    const avgKDANum  = (agg.avg_deaths ?? 0) > 0
         ? ((agg.avg_kills ?? 0) + (agg.avg_assists ?? 0)) / agg.avg_deaths
-        : null; // null = "Perfect"
+        : null;
 
     const analysis = {
         totalGames,
@@ -288,9 +308,9 @@ function getMatchAnalysis(player) {
         losses:       totalGames - wins,
         winrate:      totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0,
         avgKDA:       avgKDANum !== null ? Number(avgKDANum.toFixed(1)) : "Perfect",
-        avgKills:     Math.round(agg.avg_kills    ?? 0),
-        avgDeaths:    Math.round(agg.avg_deaths   ?? 0),
-        avgAssists:   Math.round(agg.avg_assists  ?? 0),
+        avgKills:     Math.round(agg.avg_kills   ?? 0),
+        avgDeaths:    Math.round(agg.avg_deaths  ?? 0),
+        avgAssists:   Math.round(agg.avg_assists ?? 0),
         lpChange:     Math.round(agg.total_lp_change ?? 0),
         currentStreak,
         streakType,
@@ -310,7 +330,7 @@ function getMatchAnalysis(player) {
 }
 
 // ─────────────────────────────────────────
-//  CALCUL DU NIVEAU DE PERFORMANCE
+//  NIVEAU DE PERFORMANCE
 // ─────────────────────────────────────────
 function getPerformanceLevel({
     recentWinrate = 0,
@@ -321,33 +341,29 @@ function getPerformanceLevel({
     lpTrend       = 0,
     totalGames    = 0,
 } = {}) {
-    let score        = 0;
-    let bonusPoints  = 0;
-    let penalties    = 0;
+    let score       = 0;
+    let bonusPoints = 0;
+    let penalties   = 0;
 
-    // Winrate récent (poids 40 %)
     if      (recentWinrate >= 80) score += 3;
     else if (recentWinrate >= 70) score += 2.5;
     else if (recentWinrate >= 60) score += 2;
     else if (recentWinrate >= 50) score += 1;
     else if (recentWinrate >= 40) score -= 1;
 
-    // Winrate global (poids 25 %)
     if      (globalWinrate >= 65) score += 3;
     else if (globalWinrate >= 55) score += 2;
     else if (globalWinrate >= 50) score += 1.5;
     else if (globalWinrate >= 45) score += 1;
     else                          score -= 2;
 
-    // KDA moyen (poids 25 %)
-    const kdaNum = typeof avgKDA === "string" ? 99 : avgKDA; // "Perfect" --> meilleur score
+    const kdaNum = typeof avgKDA === "string" ? 99 : avgKDA;
     if      (kdaNum >= 3.5) score += 2.5;
     else if (kdaNum >= 2.5) score += 2;
     else if (kdaNum >= 2.0) score += 1;
     else if (kdaNum >= 1.5) score += 0;
     else if (kdaNum >= 1.0) score -= 2;
 
-    // Bonus / malus série
     if (streakType === "win") {
         if      (currentStreak >= 7) bonusPoints += 1;
         else if (currentStreak >= 5) bonusPoints += 0.5;
@@ -357,24 +373,21 @@ function getPerformanceLevel({
         else if (currentStreak >= 3) penalties += 1;
     }
 
-    if (lpTrend   >  50) bonusPoints += 0.5;
-    else if (lpTrend < -50) penalties += 0.5;
-
-    if      (totalGames >= 50) bonusPoints += 0.25;
-    else if (totalGames <  10) penalties  += 0.25;
+    if      (lpTrend    >  100) bonusPoints += 0.75;
+    else if (lpTrend    < -100) penalties   += 0.5;
 
     const finalScore = Math.max(0, score + bonusPoints - penalties);
 
-    if      (finalScore >= 8.5) return { level: "🌟 CANNA-MESSI-CR7",       color: 0xF0E68C };
-    else if (finalScore >= 7.0) return { level: "🔥 EXCELLENT",  color: 0x8500FF };
-    else if (finalScore >= 5.5) return { level: "⭐ TRES BON",   color: 0x00FF00 };
-    else if (finalScore >= 4.0) return { level: "✅ SOLIDE",      color: 0x00BFFF };
-    else if (finalScore >= 2.5) return { level: "⚡ MOYEN",       color: 0xFFD700 };
-    else                         return { level: "❄️ RAZMO TIER", color: 0xFF6B6B };
+    if      (finalScore >= 8.5) return { level: "🌟 CANNA-MESSI-CR7", color: 0xF0E68C };
+    else if (finalScore >= 7.0) return { level: "🔥 EXCELLENT",        color: 0x8500FF };
+    else if (finalScore >= 5.5) return { level: "⭐ TRES BON",          color: 0x00FF00 };
+    else if (finalScore >= 4.0) return { level: "✅ SOLIDE",             color: 0x00BFFF };
+    else if (finalScore >= 2.5) return { level: "⚡ MOYEN",              color: 0xFFD700 };
+    else                         return { level: "❄️ RAZMO TIER",        color: 0xFF6B6B };
 }
 
 // ─────────────────────────────────────────
-//  CHAMPIONS RÉCENTS 
+//  CHAMPIONS RÉCENTS
 // ─────────────────────────────────────────
 function getTopChampionsRecent(player, matchCount = 50) {
     const rows = global.db.prepare(`
@@ -385,7 +398,6 @@ function getTopChampionsRecent(player, matchCount = 50) {
         LIMIT ?
     `).all(player.id, matchCount);
 
-    /** @type {Record<string, {name:string,games:number,wins:number,totalKills:number,totalDeaths:number,totalAssists:number}>} */
     const championStats = {};
 
     for (const match of rows) {
@@ -418,11 +430,11 @@ function getTopChampionsRecent(player, matchCount = 50) {
 }
 
 // ─────────────────────────────────────────
-//  MAÎTRISE DES CHAMPIONS (API Riot — avec cache + long)
+//  MAÎTRISE (API Riot — cache 30 min)
 // ─────────────────────────────────────────
 async function getChampionMastery(player) {
     const cacheKey = `mastery_${player.puuid}`;
-    const cached = statsCache.get(cacheKey);
+    const cached   = statsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < MASTERY_CACHE_DURATION) return cached.data;
 
     const RIOT_API_KEY = process.env.RIOT_API_KEY;
@@ -444,8 +456,7 @@ async function getChampionMastery(player) {
         return masteryData;
 
     } catch (error) {
-        console.error(`❌ Maîtrise API [${error.response?.status ?? error.message}] pour ${player.riot_id}`);
-        // On cache quand même un objet vide (durée réduite : 5 min)
+        console.error(`❌ Maîtrise [${error.response?.status ?? error.message}] ${player.riot_id}`);
         statsCache.set(cacheKey, {
             data: masteryData,
             timestamp: Date.now() - (MASTERY_CACHE_DURATION - 5 * 60_000),
@@ -458,7 +469,7 @@ async function getChampionMastery(player) {
 //  CONSTRUCTION DE L'EMBED
 // ─────────────────────────────────────────
 async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, interaction) {
-    const rankEmoji  = getRankEmoji(stats.currentRank);
+    const rankEmoji   = getRankEmoji(stats.currentRank);
     const performance = analysis.performanceLevel;
 
     const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
@@ -475,15 +486,14 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
               } consécutives`
             : "➖ Aucune série en cours";
 
+    //utilise buildProfileIconUrl au lieu du ternaire falsy mtn
+    const profileIconUrl = buildProfileIconUrl(stats.summoner?.profileIconId);
+
     const embed = new EmbedBuilder()
         .setTitle(`📊 ${player.riot_id}`)
         .setDescription(`${links}\n*Analyse demandée par ${interaction.user.displayName}*`)
         .setColor(performance.color)
-        .setThumbnail(
-            stats.summoner?.profileIconId
-                ? `https://ddragon.leagueoflegends.com/cdn/14.23.1/img/profileicon/${stats.summoner.profileIconId}.png`
-                : null
-        )
+        .setThumbnail(profileIconUrl)
         .addFields(
             {
                 name: "🏆 **RANG & PROGRESSION**",
@@ -510,23 +520,18 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
             }
         );
 
-    // ── Champions récents ────────────────────────────────────────────────────
+    // Champions récents
     const topChampions = getTopChampionsRecent(player, 50);
 
     if (topChampions.length > 0) {
-        const championIds = topChampions
-            .map((c) => getChampionIdByName(c.name))
-            .filter(Boolean);
+        const masteryData   = await getChampionMastery(player);
+        const medals        = ["🥇", "🥈", "🥉"];
 
-        // Maîtrise (appel API avec cache 30 min)
-        const masteryData = await getChampionMastery(player);
-
-        const medals       = ["🥇", "🥈", "🥉"];
         const championsText = topChampions
             .map((champ, i) => {
-                const id      = getChampionIdByName(champ.name);
-                const pts     = id && masteryData[id] ? masteryData[id].toLocaleString() + " pts" : "0 pts";
-                const avgKDA  = `${champ.avgKills}/${champ.avgDeaths}/${champ.avgAssists}`;
+                const id     = getChampionIdByName(champ.name);
+                const pts    = (id && masteryData[id]) ? masteryData[id].toLocaleString() + " pts" : "0 pts";
+                const avgKDA = `${champ.avgKills}/${champ.avgDeaths}/${champ.avgAssists}`;
                 return (
                     `${medals[i] ?? "🏅"} **${champ.name}** • ${champ.games}G - ${champ.winrate}% WR • ${pts}\n` +
                     `     📊 **${avgKDA}** (${champ.kda} KDA)`
@@ -574,16 +579,6 @@ function createInteractiveButtons(player) {
 // ─────────────────────────────────────────
 //  FALLBACKS
 // ─────────────────────────────────────────
-function getDefaultAnalysis() {
-    return {
-        totalGames: 0, wins: 0, losses: 0, winrate: 0,
-        currentStreak: 0, streakType: "none",
-        avgKDA: 0, avgKills: 0, avgDeaths: 0, avgAssists: 0,
-        lpChange: 0, topChampions: [],
-        performanceLevel: { level: "📊 DONNÉES INSUFFISANTES", color: 0x666666 },
-    };
-}
-
 function createLocalStatsEmbed(player) {
     const rankEmoji = getRankEmoji(player.last_rank);
     return new EmbedBuilder()
@@ -601,11 +596,9 @@ function createLocalStatsEmbed(player) {
 }
 
 // ─────────────────────────────────────────
-//  MAP CHAMPION NAME → ID  (Patch 14.10)
+//  MAP CHAMPION NAME → ID
 // ─────────────────────────────────────────
 function getChampionIdByName(championName) {
-    // Utiliser le Data Dragon à la place d'une map statique serait l'idéal,
-    // mais cette map couvre tous les champions actuels.
     const CHAMPION_IDS = {
         "Aatrox": 266, "Ahri": 103, "Akali": 84, "Akshan": 166, "Alistar": 12,
         "Ambessa": 799, "Amumu": 32, "Anivia": 34, "Annie": 1, "Aphelios": 523,
@@ -638,7 +631,7 @@ function getChampionIdByName(championName) {
         "Rumble": 68, "Ryze": 13,
         "Samira": 360, "Sejuani": 113, "Senna": 235, "Seraphine": 147, "Sett": 875,
         "Shaco": 35, "Shen": 98, "Shyvana": 102, "Singed": 27, "Sion": 14,
-        "Sivir": 15, "Skarner": 901, "Smolder": 902, "Sona": 37, "Soraka": 16, // Smolder corrigé mais peut être ID 888
+        "Sivir": 15, "Skarner": 901, "Smolder": 893, "Sona": 37, "Soraka": 16,
         "Swain": 50, "Sylas": 517, "Syndra": 134,
         "Tahm Kench": 223, "Taliyah": 163, "Talon": 91, "Taric": 44, "Teemo": 17,
         "Thresh": 412, "Tristana": 18, "Trundle": 48, "Tryndamere": 23,
