@@ -405,13 +405,16 @@ async function generateLPGraph(playerId, maxGames = 200) {
     drawPoints(ctx, points, minLP, maxLP, graphW, graphH);
     drawStats(ctx, points, graphW);
 
-    console.log('Début encodage PNG...');
+    logger.info('GRAPH', `Début encodage PNG pour playerId: ${playerId}`, {
+        points: points.length
+    });
 
     // Convertir via toDataURL — fonctionne sur toutes les versions node-canvas
     const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
     const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
-    console.log('Encodage JPEG terminé, taille:', buffer.length);
+    logger.info('GRAPH', `Encodage JPEG terminé`, { size: buffer.length });
+
     return buffer;
 }
 
