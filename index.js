@@ -593,50 +593,75 @@ client.on("interactionCreate", async (interaction) => {
 
 // FONCTION PRINCIPALE DE MONITORING
 async function checkAllPlayers() {
-    console.log("🔍 Vérification des nouveaux matchs...");
+    logger.info('MONITOR', `Début de la vérification des nouveaux matchs`, {
+        timestamp: new Date().toISOString()
+    });
 
     const rows = global.db.prepare(`SELECT * FROM players`).all();
-    if (!rows) return;
+
+    if (!rows?.length) {
+        logger.info('MONITOR', `Aucun joueur à surveiller`);
+        return;
+    }
+
+    logger.info('MONITOR', `${rows.length} joueur(s) à vérifier`);
+
+    let success = 0;
+    let errors = 0;
 
     for (const player of rows) {
         try {
             await checkPlayerNewMatches(player);
+            success++;
         } catch (error) {
-            console.error(`  Erreur pour ${player.riot_id}:`, error.message);
+            errors++;
+            logger.error('MONITOR', `Erreur monitoring pour ${player.riot_id}`, {
+                error: error.message,
+                playerId: player.id,
+                guild: player.guild_id,
+                status: error.response?.status ?? null
+            });
         }
     }
+
+    logger.info('MONITOR', `Vérification terminée`, {
+        total: rows.length,
+        success,
+        errors
+    });
 }
+
 
 const matchCache = new Map();
 
 function setMatchCache(matchId, matchInfo) {
     matchCache.set(matchId, matchInfo);
-    console.log(`  Cache set pour matchId: "${matchId}"`);
-    console.log(`  Taille du cache: ${matchCache.size}`);
-    // Nettoyage auto après 2 jours
+    logger.info('CACHE', `Cache set pour matchId: "${matchId}" | Taille: ${matchCache.size}`);
+
     setTimeout(() => {
         matchCache.delete(matchId);
-        console.log(`  Cache nettoyé pour ${matchId}`);
+        logger.info('CACHE', `Cache nettoyé pour ${matchId}`);
     }, 2880 * 60 * 1000);
 }
+
 
 const timelineCache = new Map();
 
 function setTimelineCache(matchId, timeline) {
     timelineCache.set(matchId, timeline);
-    console.log(`  Timeline cache set pour matchId: "${matchId}"`);
+    logger.info('CACHE', `Timeline cache set pour matchId: "${matchId}"`);
     setTimeout(() => {
         timelineCache.delete(matchId);
-        console.log(`  Timeline cache nettoyé pour ${matchId}`);
+        logger.info('CACHE', `Timeline cache nettoyé pour ${matchId}`);
     }, 2880 * 60 * 1000);
 }
+
 
 
 
 // VÉRIFIER UN JOUEUR
 async function checkPlayerNewMatches(player) {
     try {
-        // Récupérer les derniers matchs
         const matchesResponse = await axios.get(
             `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${player.puuid}/ids?queue=420&count=3`,
             { headers: { "X-Riot-Token": RIOT_API_KEY } },
@@ -645,32 +670,28 @@ async function checkPlayerNewMatches(player) {
         const matchIds = matchesResponse.data;
         if (!matchIds || matchIds.length === 0) return;
 
-        // Vérifier s'il y a un nouveau match
         const latestMatchId = matchIds[0];
 
         if (latestMatchId !== player.last_match_id) {
-            console.log(
-                `  Nouveau match pour ${player.riot_id}: ${latestMatchId}`,
-            );
+            logger.info('MONITOR', `Nouveau match détecté pour ${player.riot_id}`, {
+                matchId: latestMatchId
+            });
 
-            // Mettre à jour le dernier match en BDD
             db.prepare(`
-    UPDATE players 
-    SET last_match_id = ? 
-    WHERE id = ?
-`).run(latestMatchId, player.id);
+                UPDATE players 
+                SET last_match_id = ? 
+                WHERE id = ?
+            `).run(latestMatchId, player.id);
 
-
-            // Traiter le nouveau match
             await processNewMatch(player, latestMatchId);
         }
     } catch (error) {
-        console.error(
-            ` Erreur vérification ${player.riot_id}:`,
-            error.message,
-        );
+        logger.error('MONITOR', `Erreur vérification ${player.riot_id}`, {
+            message: error.message
+        });
     }
 }
+
 
 function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
     const participants = matchInfo.participants;
@@ -1145,30 +1166,28 @@ async function testRiotAPI() {
             "https://euw1.api.riotgames.com/lol/status/v4/platform-data",
             { headers: { "X-Riot-Token": process.env.RIOT_API_KEY } },
         );
-        console.log(" API Riot OK - Status:", response.status);
-        status = true
+        logger.info('API', `Riot API OK`, { status: response.status });
+        status = true;
     } catch (error) {
-        console.log(" API Riot KO:", error.response?.status);
+        logger.error('API', `Riot API KO`, { status: error.response?.status });
         if (error.response?.status === 403) {
-            console.log(
-                " Clé expirée ou invalide - Va régénérer sur developer.riotgames.com",
-            );
+            logger.error('API', `Clé expirée ou invalide - Va régénérer sur developer.riotgames.com`);
         }
     }
 
-    //  Si l'API est down, envoyer un MP
     if (status === false) {
         try {
             const user = await client.users.fetch('414354252236849172');
-            await user.send(' **API RIOT DOWN** - La clé API ne fonctionne plus !');
-            //console.log(' MP envoyé pour alerte API');
+            await user.send('🚨 **API RIOT DOWN** - La clé API ne fonctionne plus !');
+            logger.info('API', `MP d'alerte envoyé`);
         } catch (error) {
-            // console.error(' Erreur envoi MP:', error.message);
+            logger.error('API', `Erreur envoi MP alerte`, { message: error.message });
         }
     }
 
     return status;
 }
+
 
 // Appelle ça au démarrage
 testRiotAPI();
