@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { getRankEmoji, getRankOrder } = require("./utils/rankUtils");
 const cron = require('node-cron');
+const logger = require('./utils/loggers');
 
 const {
     Client,
@@ -297,7 +298,7 @@ client.on("interactionCreate", async (interaction) => {
     //  GESTION DES BOUTONS OPTIMISÉE
     else if (interaction.isButton()) {
         try {
-            // ✅ Vérification de sécurité AVANT defer
+            // Vérification de sécurité AVANT defer
             if (interaction.replied || interaction.deferred) {
                 console.log("  Interaction déjà traitée, on ignore");
                 return;
