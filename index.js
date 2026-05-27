@@ -357,13 +357,16 @@ client.on("interactionCreate", async (interaction) => {
                 const matchId = parts[1];
                 const puuid = parts[2];
 
-                console.log(`  matchId: "${matchId}"`);
-                console.log(`  Cache has matchId:`, matchCache.has(matchId));
+                logger.info('BUTTON', `Stats détaillées demandées`, {
+                    matchId,
+                    cacheHit: matchCache.has(matchId),
+                    user: interaction.user.tag
+                });
 
                 const matchInfo = matchCache.get(matchId);
                 if (!matchInfo) {
                     await interaction.editReply({
-                        content: "  Les données du match ont expiré (2 jours max enfin j'crois). Désolé !",
+                        content: "Les données du match ont expiré (2 jours max enfin j'crois). Désolé !",
                     });
                     return;
                 }
@@ -376,12 +379,14 @@ client.on("interactionCreate", async (interaction) => {
                     );
                     timeline = timelineResponse.data;
                 } catch (error) {
-                    console.error("  Erreur timeline:", error.message);
+                    logger.error('API', `Erreur récupération timeline`, {
+                        matchId,
+                        message: error.message
+                    });
                 }
 
-                const embed = buildDetailedStatsEmbed(matchInfo, puuid, timeline, interaction.user.tag); //  on passe le user
+                const embed = buildDetailedStatsEmbed(matchInfo, puuid, timeline, interaction.user.tag);
 
-                //  Bouton "Envoyer à tout le monde"
                 const shareButton = new ButtonBuilder()
                     .setCustomId(`share|${matchId}|${puuid}`)
                     .setLabel("📢 Envoyer à tout le monde")
@@ -391,6 +396,7 @@ client.on("interactionCreate", async (interaction) => {
 
                 await interaction.editReply({ embeds: [embed], components: [row] });
             }
+
 
             // handler pour le bouton "Envoyer à tout le monde"
             else if (interaction.customId.startsWith("share|")) {
