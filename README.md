@@ -58,6 +58,7 @@ FCC-LP-TRACKERv2/
     ├── graphUtils.js        # LP progression chart generation (Canvas)
     ├── weeklyRecap.js       # Weekly recap embed builder and scheduler
     └── historyUtils.js      # Match history formatting and embed builder
+    └── loggers.js           # Fichier d'initialisation des logs
 ```
 
 ---
