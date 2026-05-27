@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require("discord.js");
+const logger = require("../utils/loggers");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -23,20 +24,19 @@ module.exports = {
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        // 🔐 VÉRIFICATION DES PERMISSIONS
         const userId = interaction.user.id;
         const member = interaction.member;
         const isSpecialUser = userId === "414354252236849172";
         const isAdmin = member.permissions.has(PermissionFlagsBits.Administrator);
 
         if (!isAdmin && !isSpecialUser) {
+            logger.warn('COMMAND', `Accès refusé /clear`, { user: interaction.user.tag, guild: interaction.guildId });
+
             const deniedEmbed = new EmbedBuilder()
                 .setColor("#ff0000")
                 .setTitle("🚫 Accès refusé")
                 .setDescription("Vous n'avez pas les permissions nécessaires pour utiliser cette commande.")
-                .addFields(
-                    { name: "Permissions requises", value: "• Administrateur\n• Utilisateur autorisé" }
-                )
+                .addFields({ name: "Permissions requises", value: "• Administrateur\n• Utilisateur autorisé" })
                 .setTimestamp();
 
             return await interaction.editReply({ embeds: [deniedEmbed] });
@@ -45,7 +45,12 @@ module.exports = {
         const nombre = interaction.options.getInteger("nombre");
         const channelId = interaction.options.getString("channel");
 
-        // 📍 DÉTERMINER LE CHANNEL À NETTOYER
+        logger.info('COMMAND', `/clear exécuté par ${interaction.user.tag}`, {
+            nombre: nombre || 'tous',
+            channelId: channelId || interaction.channelId,
+            guild: interaction.guildId
+        });
+
         let targetChannel;
 
         if (channelId) {
@@ -53,6 +58,7 @@ module.exports = {
                 targetChannel = await interaction.guild.channels.fetch(channelId);
 
                 if (!targetChannel.isTextBased()) {
+                    logger.warn('COMMAND', `Channel non textuel spécifié dans /clear`, { channelId });
                     return await interaction.editReply({
                         embeds: [new EmbedBuilder()
                             .setColor("#ff0000")
@@ -63,14 +69,13 @@ module.exports = {
                     });
                 }
             } catch (error) {
+                logger.error('COMMAND', `Channel introuvable dans /clear`, { channelId, error: error.message });
                 return await interaction.editReply({
                     embeds: [new EmbedBuilder()
                         .setColor("#ff0000")
                         .setTitle("❌ Channel introuvable")
                         .setDescription(`Impossible de trouver le channel avec l'ID: \`${channelId}\``)
-                        .addFields(
-                            { name: "Vérifiez que", value: "• L'ID est correct\n• Le bot a accès au channel\n• Le channel existe sur ce serveur" }
-                        )
+                        .addFields({ name: "Vérifiez que", value: "• L'ID est correct\n• Le bot a accès au channel\n• Le channel existe sur ce serveur" })
                         .setTimestamp()
                     ]
                 });
@@ -81,9 +86,7 @@ module.exports = {
 
         try {
             let deletedCount = 0;
-            const FOURTEEN_DAYS = Date.now() - 14 * 24 * 60 * 60 * 1000;
 
-            // ⏳ Mise à jour du statut toutes les 10 suppressions
             const updateStatus = async (count) => {
                 if (count % 10 === 0) {
                     await interaction.editReply({
@@ -101,55 +104,44 @@ module.exports = {
                 }
             };
 
-            // 🗑️ FONCTION DE SUPPRESSION INTELLIGENTE
-            // Sépare automatiquement les messages récents (bulkDelete) des anciens (delete unitaire)
             const deleteMessages = async (messages) => {
                 const now = Date.now();
                 const recentMessages = [];
                 const oldMessages = [];
 
-                // Trier les messages selon leur âge
                 messages.forEach(msg => {
-                    const messageAge = now - msg.createdTimestamp;
-                    const isOlderThan14Days = messageAge > 14 * 24 * 60 * 60 * 1000;
-
-                    if (isOlderThan14Days) {
-                        oldMessages.push(msg);
-                    } else {
-                        recentMessages.push(msg);
-                    }
+                    const isOlderThan14Days = (now - msg.createdTimestamp) > 14 * 24 * 60 * 60 * 1000;
+                    if (isOlderThan14Days) oldMessages.push(msg);
+                    else recentMessages.push(msg);
                 });
 
-                // Supprimer les messages récents en bulk (rapide)
                 if (recentMessages.length > 1) {
                     await targetChannel.bulkDelete(recentMessages);
                     deletedCount += recentMessages.length;
                 } else if (recentMessages.length === 1) {
-                    // bulkDelete nécessite au moins 2 messages, sinon delete unitaire
                     await recentMessages[0].delete();
                     deletedCount++;
                 }
 
-                // Supprimer les messages anciens un par un (lent mais obligatoire)
                 for (const msg of oldMessages) {
                     try {
                         await msg.delete();
                         deletedCount++;
                         await updateStatus(deletedCount);
-
-                        // ⏱️ Délai pour éviter le rate limit (1 delete/seconde environ)
                         await new Promise(resolve => setTimeout(resolve, 1100));
                     } catch (deleteError) {
-                        // Ignorer si le message a déjà été supprimé
                         if (deleteError.code !== 10008) {
-                            console.error("Erreur suppression message:", deleteError);
+                            logger.warn('COMMAND', `Erreur suppression message individuel`, { 
+                                messageId: msg.id, 
+                                error: deleteError.message,
+                                code: deleteError.code
+                            });
                         }
                     }
                 }
             };
 
             if (nombre) {
-                // 📌 SUPPRIMER UN NOMBRE SPÉCIFIQUE DE MESSAGES
                 let remaining = nombre;
                 let lastId = null;
 
@@ -167,9 +159,7 @@ module.exports = {
 
                     if (messages.size < fetchLimit) break;
                 }
-
             } else {
-                // 📌 SUPPRIMER TOUS LES MESSAGES
                 let lastId = null;
                 let hasMore = true;
 
@@ -182,12 +172,16 @@ module.exports = {
 
                     lastId = messages.last().id;
                     await deleteMessages(messages);
-
                     hasMore = messages.size === 100;
                 }
             }
 
-            // ✅ SUCCÈS
+            logger.success('COMMAND', `/clear terminé par ${interaction.user.tag}`, {
+                deletedCount,
+                channel: targetChannel.name,
+                guild: interaction.guildId
+            });
+
             await interaction.editReply({
                 embeds: [new EmbedBuilder()
                     .setColor("#00ff00")
@@ -202,7 +196,12 @@ module.exports = {
             });
 
         } catch (error) {
-            console.error("❌ Erreur lors de la suppression:", error);
+            logger.error('COMMAND', `Erreur /clear`, {
+                error: error.message,
+                code: error.code,
+                channel: targetChannel.name,
+                user: interaction.user.tag
+            });
 
             let errorMessage = "Impossible de supprimer les messages.";
             let errorDetails = error.message;

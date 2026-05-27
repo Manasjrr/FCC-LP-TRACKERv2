@@ -7,6 +7,7 @@ const {
 } = require("discord.js");
 const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
 const axios = require("axios");
+const logger = require("../utils/loggers");
 
 // ─────────────────────────────────────────
 //  CACHE
@@ -16,8 +17,7 @@ const CACHE_DURATION         = 10 * 60 * 1000;
 const MASTERY_CACHE_DURATION = 30 * 60 * 1000;
 const CACHE_CLEANUP_INTERVAL = 15 * 60 * 1000;
 
-// Version du patch DDragon (mise à jour automatique)
-let cachedPatchVersion = "15.10.1"; // Fallback
+let cachedPatchVersion = "15.10.1";
 
 async function fetchLatestPatchVersion() {
     try {
@@ -26,29 +26,24 @@ async function fetchLatestPatchVersion() {
             { timeout: 5_000 }
         );
         cachedPatchVersion = res.data[0];
-    } catch {
-        // Garde le fallback silencieusement
+        logger.info('PATCH', `Version DDragon mise à jour : ${cachedPatchVersion}`);
+    } catch (error) {
+        logger.warn('PATCH', `Impossible de récupérer la version DDragon, fallback : ${cachedPatchVersion}`, {
+            error: error.message
+        });
     }
 }
 
-// Appel au démarrage + refresh toutes les 24h
 fetchLatestPatchVersion();
 setInterval(fetchLatestPatchVersion, 24 * 60 * 60 * 1000);
 
 // ─────────────────────────────────────────
 //  HELPER — URL ICÔNE DE PROFIL
 // ─────────────────────────────────────────
-
-/**
- * Construit l'URL de l'icône de profil.
- *  profileIconId = 0 est une icône VALIDE (falsy en JS),
- *    on utilise typeof pour éviter de la traiter comme absente.
- */
 function buildProfileIconUrl(profileIconId) {
     if (typeof profileIconId === "number" && profileIconId >= 0) {
         return `https://ddragon.leagueoflegends.com/cdn/${cachedPatchVersion}/img/profileicon/${profileIconId}.png`;
     }
-    // Icône générique par défaut
     return `https://ddragon.leagueoflegends.com/cdn/${cachedPatchVersion}/img/profileicon/29.png`;
 }
 
@@ -83,7 +78,13 @@ module.exports = {
             return;
         }
 
+        logger.info('COMMAND', `/stats exécuté par ${interaction.user.tag}`, {
+            guild: interaction.guildId,
+            rang: interaction.options.getInteger("rang") || 'lié'
+        });
+
         if (!global.db) {
+            logger.error('DB', `Base de données non disponible pour /stats`, { guild: interaction.guildId });
             return interaction.editReply("❌ Base de données indisponible").catch(() => {});
         }
 
@@ -93,16 +94,21 @@ module.exports = {
         if (rankOption) {
             targetPlayer = getPlayerByRank(rankOption, interaction.guildId);
             if (!targetPlayer) {
+                logger.warn('COMMAND', `Position #${rankOption} introuvable dans /stats`, { guild: interaction.guildId });
                 return interaction.editReply(`❌ Aucun joueur trouvé à la position **#${rankOption}**`);
             }
         } else {
             targetPlayer = getLinkedPlayer(interaction.user.id, interaction.guildId);
             if (!targetPlayer) {
-                return interaction.editReply(
-                    "❌ Aucun compte lié ! Utilise `/link` ou spécifie un rang."
-                );
+                logger.info('COMMAND', `Aucun compte lié pour ${interaction.user.tag} dans /stats`, { guild: interaction.guildId });
+                return interaction.editReply("❌ Aucun compte lié ! Utilise `/link` ou spécifie un rang.");
             }
         }
+
+        logger.info('COMMAND', `/stats → joueur ciblé : ${targetPlayer.riot_id}`, {
+            playerId: targetPlayer.id,
+            guild: interaction.guildId
+        });
 
         try {
             const [playerStats, matchAnalysis, serverPosition] = await Promise.all([
@@ -120,10 +126,20 @@ module.exports = {
             );
 
             const actionRow = createInteractiveButtons(targetPlayer);
+
+            logger.success('COMMAND', `/stats affiché pour ${targetPlayer.riot_id}`, {
+                isLocal: playerStats.isLocal,
+                totalGames: matchAnalysis.totalGames,
+                guild: interaction.guildId
+            });
+
             await interaction.editReply({ embeds: [embed], components: [actionRow] });
 
         } catch (error) {
-            console.error("❌ Erreur stats:", error.message);
+            logger.error('COMMAND', `Erreur critique /stats pour ${targetPlayer.riot_id}`, {
+                error: error.message,
+                guild: interaction.guildId
+            });
             const fallbackEmbed = createLocalStatsEmbed(targetPlayer);
             await interaction.editReply({ embeds: [fallbackEmbed] }).catch(() => {});
         }
@@ -189,7 +205,10 @@ function getServerPosition(targetRiotId, guildId) {
 async function getPlayerCurrentStats(player) {
     const cacheKey = `current_${player.puuid}`;
     const cached   = statsCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) return cached.data;
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+        logger.info('CACHE', `Hit cache stats pour ${player.riot_id}`);
+        return cached.data;
+    }
 
     const RIOT_API_KEY = process.env.RIOT_API_KEY;
 
@@ -212,7 +231,6 @@ async function getPlayerCurrentStats(player) {
         const result = {
             summoner: {
                 ...summoner,
-                // profileIconId est garanti présent ici (même si 0)
                 profileIconId: summoner.profileIconId,
                 displayName: summoner.gameName
                     ? `${summoner.gameName}#${summoner.tagLine}`
@@ -228,10 +246,18 @@ async function getPlayerCurrentStats(player) {
         };
 
         statsCache.set(cacheKey, { data: result, timestamp: Date.now() });
+        logger.info('API', `Stats Riot récupérées pour ${player.riot_id}`, {
+            rank: result.currentRank,
+            lp: result.currentLP
+        });
+
         return result;
 
     } catch (error) {
-        console.error(`❌ API Stats ${player.riot_id}:`, error.response?.status ?? error.message);
+        logger.error('API', `Échec récupération stats Riot pour ${player.riot_id}`, {
+            status: error.response?.status,
+            error: error.message
+        });
 
         const fallback = {
             summoner:    null,
@@ -257,7 +283,10 @@ async function getPlayerCurrentStats(player) {
 function getMatchAnalysis(player) {
     const cacheKey = `analysis_${player.id}`;
     const cached   = statsCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) return cached.data;
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+        logger.info('CACHE', `Hit cache analyse pour ${player.riot_id}`);
+        return cached.data;
+    }
 
     const agg = global.db.prepare(`
         SELECT
@@ -276,7 +305,6 @@ function getMatchAnalysis(player) {
         )
     `).get(player.id) ?? {};
 
-    // Calcul de la série en cours
     const recentMatches = global.db.prepare(`
         SELECT win FROM match_history
         WHERE player_id = ?
@@ -326,6 +354,12 @@ function getMatchAnalysis(player) {
     };
 
     statsCache.set(cacheKey, { data: analysis, timestamp: Date.now() });
+    logger.info('DB', `Analyse matchs calculée pour ${player.riot_id}`, {
+        totalGames,
+        winrate: analysis.winrate,
+        streak: `${currentStreak} ${streakType}`
+    });
+
     return analysis;
 }
 
@@ -373,8 +407,8 @@ function getPerformanceLevel({
         else if (currentStreak >= 3) penalties += 1;
     }
 
-    if      (lpTrend    >  100) bonusPoints += 0.75;
-    else if (lpTrend    < -100) penalties   += 0.5;
+    if      (lpTrend >  100) bonusPoints += 0.75;
+    else if (lpTrend < -100) penalties   += 0.5;
 
     const finalScore = Math.max(0, score + bonusPoints - penalties);
 
@@ -430,12 +464,15 @@ function getTopChampionsRecent(player, matchCount = 50) {
 }
 
 // ─────────────────────────────────────────
-//  MAÎTRISE (API Riot — cache 30 min)
+//  MAÎTRISE
 // ─────────────────────────────────────────
 async function getChampionMastery(player) {
     const cacheKey = `mastery_${player.puuid}`;
     const cached   = statsCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < MASTERY_CACHE_DURATION) return cached.data;
+    if (cached && Date.now() - cached.timestamp < MASTERY_CACHE_DURATION) {
+        logger.info('CACHE', `Hit cache maîtrise pour ${player.riot_id}`);
+        return cached.data;
+    }
 
     const RIOT_API_KEY = process.env.RIOT_API_KEY;
     const masteryData  = {};
@@ -453,10 +490,17 @@ async function getChampionMastery(player) {
         }
 
         statsCache.set(cacheKey, { data: masteryData, timestamp: Date.now() });
+        logger.info('API', `Maîtrise récupérée pour ${player.riot_id}`, {
+            championsCount: res.data.length
+        });
+
         return masteryData;
 
     } catch (error) {
-        console.error(`❌ Maîtrise [${error.response?.status ?? error.message}] ${player.riot_id}`);
+        logger.error('API', `Échec récupération maîtrise pour ${player.riot_id}`, {
+            status: error.response?.status,
+            error: error.message
+        });
         statsCache.set(cacheKey, {
             data: masteryData,
             timestamp: Date.now() - (MASTERY_CACHE_DURATION - 5 * 60_000),
@@ -486,7 +530,6 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
               } consécutives`
             : "➖ Aucune série en cours";
 
-    //utilise buildProfileIconUrl au lieu du ternaire falsy mtn
     const profileIconUrl = buildProfileIconUrl(stats.summoner?.profileIconId);
 
     const embed = new EmbedBuilder()
@@ -520,12 +563,11 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
             }
         );
 
-    // Champions récents
     const topChampions = getTopChampionsRecent(player, 50);
 
     if (topChampions.length > 0) {
-        const masteryData   = await getChampionMastery(player);
-        const medals        = ["🥇", "🥈", "🥉"];
+        const masteryData = await getChampionMastery(player);
+        const medals      = ["🥇", "🥈", "🥉"];
 
         const championsText = topChampions
             .map((champ, i) => {
@@ -577,7 +619,7 @@ function createInteractiveButtons(player) {
 }
 
 // ─────────────────────────────────────────
-//  FALLBACKS
+//  FALLBACK
 // ─────────────────────────────────────────
 function createLocalStatsEmbed(player) {
     const rankEmoji = getRankEmoji(player.last_rank);

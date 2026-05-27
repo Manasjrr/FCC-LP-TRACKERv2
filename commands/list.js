@@ -1,5 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
+const logger = require("../utils/loggers");
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("list")
@@ -8,16 +10,15 @@ module.exports = {
     async execute(interaction) {
         await interaction.deferReply();
 
-        // Vous devez importer 'db' en haut du fichier ou le passer depuis index.js
-        // Pour l'instant, je vais supposer que 'db' est disponible globalement
+        logger.info('COMMAND', `/list exécuté par ${interaction.user.tag}`, { guild: interaction.guildId });
 
         const rows = global.db.prepare(`SELECT * FROM players WHERE guild_id = ?`).all(interaction.guildId);
 
         if (!rows || rows.length === 0) {
+            logger.info('COMMAND', `Aucun compte surveillé sur le serveur`, { guild: interaction.guildId });
             return interaction.editReply("📭 Aucun compte surveillé sur ce serveur.");
         }
 
-        // 🏆 TRI PAR RANG, DIVISION, LP
         rows.sort((a, b) => {
             const rankA = getRankOrder(a.last_rank, a.last_lp);
             const rankB = getRankOrder(b.last_rank, b.last_lp);
@@ -44,15 +45,24 @@ module.exports = {
 
                 description += `**${i + 1}.** ${row.riot_id} ${dpmLink}\n`;
                 description += `└ ${rankEmoji} ${row.last_rank || "Non classé"} (${row.last_lp || 0} LP)\n\n`;
-            } catch (error) {
-                console.error(`Erreur récupération user/channel pour ${row.riot_id}:`, error);
-                const rankEmoji = getRankEmoji(row.last_rank);
 
+            } catch (error) {
+                logger.warn('COMMAND', `Erreur affichage joueur dans /list : ${row.riot_id}`, {
+                    error: error.message,
+                    guild: interaction.guildId
+                });
+
+                const rankEmoji = getRankEmoji(row.last_rank);
                 description += `**${i + 1}.** ${row.riot_id}\n`;
                 description += `└ ⚠️ Utilisateur/Channel introuvable\n`;
                 description += `└ ${rankEmoji} ${row.last_rank || "Non classé"} (${row.last_lp || 0} LP)\n\n`;
             }
         }
+
+        logger.success('COMMAND', `/list affiché avec succès`, {
+            count: rows.length,
+            guild: interaction.guildId
+        });
 
         description += `*[ℹ️ Classement DPM](https://dpm.lol/leaderboards/2959450a-838c-4bd0-87fa-fe733f81c245)*`;
         embed.setDescription(description);
