@@ -1,4 +1,4 @@
-// 📁 utils/playerUtils.js
+// utils/playerUtils.js
 
 function getPlayerById(playerId) {
     return global.db.prepare(`SELECT * FROM players WHERE id = ?`).get(playerId);
@@ -25,13 +25,13 @@ function getTimeAgo(timestamp) {
     return `il y a ${diffDays}j`;
 }
 
-// 🎨 Fonction pour créer l'embed avec couleurs dynamiques
+// Fonction pour créer l'embed avec couleurs dynamiques
 function createHistoryEmbedWithColors(player, matches, requestedCount) {
-    // 📊 CALCUL WINRATE
+    // CALCUL WINRATE
     const wins = matches.filter(m => m.win).length;
     const winrate = Math.round((wins / matches.length) * 100);
 
-    // 🎨 COULEUR DYNAMIQUE
+    // COULEUR DYNAMIQUE
     let embedColor;
     if (winrate >= 80) embedColor = 0x00ff00;      // 🟢 Vert brillant
     else if (winrate >= 60) embedColor = 0x32cd32;  // 🟢 Vert
@@ -64,7 +64,7 @@ function createHistoryEmbedWithColors(player, matches, requestedCount) {
         inline: false
     });
 
-    // 📊 STATS FINALES DANS UN FIELD AU LIEU DU FOOTER
+    // STATS FINALES DANS UN FIELD AU LIEU DU FOOTER
     const totalLp = matches.reduce((sum, m) => sum + (m.lp_change || 0), 0);
     const lpText = totalLp > 0 ? `+${totalLp}` : `${totalLp}`;
     const lpEmoji = totalLp > 0 ? '📈' : totalLp < 0 ? '📉' : '➖';
@@ -74,7 +74,7 @@ function createHistoryEmbedWithColors(player, matches, requestedCount) {
     const totalAssists = matches.reduce((sum, m) => sum + m.assists, 0);
     const avgKDA = totalDeaths > 0 ? ((totalKills + totalAssists) / totalDeaths).toFixed(2) : '∞';
 
-    // 🏆 FIELD POUR LES STATS AVEC ÉMOJIS
+    // FIELD POUR LES STATS AVEC ÉMOJIS
     embed.addFields({
         name: '📊 Statistiques globales',
         value: `⚔️ **KDA moyen:** ${avgKDA}\n${lpEmoji} **LP total:** ${lpText}\n🎯 **Winrate:** ${wins}W-${matches.length - wins}L (${winrate}%)`,
