@@ -663,18 +663,17 @@ function setTimelineCache(matchId, timeline) {
 }
 
 
-
-
 async function checkPlayerNewMatches(player) {
     try {
         const matchesResponse = await axios.get(
             `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${player.puuid}/ids?queue=420&count=5`,
-            { headers: { "X-Riot-Token": RIOT_API_KEY } },
+            { headers: { "X-Riot-Token": RIOT_API_KEY } }
         );
 
         const matchIds = matchesResponse.data;
         if (!matchIds?.length) return;
 
+        // Collecter les nouveaux matchs (du plus récent au plus ancien)
         const newMatchIds = [];
         for (const matchId of matchIds) {
             if (matchId === player.last_match_id) break;
@@ -683,25 +682,25 @@ async function checkPlayerNewMatches(player) {
 
         if (newMatchIds.length === 0) return;
 
+        //Inverser pour traiter du plus ancien au plus récent
+        newMatchIds.reverse();
+
         logger.info('MONITOR', `${newMatchIds.length} nouveau(x) match(s) pour ${player.riot_id}`, {
             matches: newMatchIds
         });
 
-        const now = Date.now();
-        const LIMIT_30J = 30 * 24 * 60 * 60 * 1000;
-        const LIMIT_7J = 7 * 24 * 60 * 60 * 1000;
+        // Variable locale pour éviter la mutation du paramètre
+        let currentPlayer = player;
 
-        // Du plus ancien au plus récent
         for (const [index, matchId] of newMatchIds.entries()) {
+            // isLatest calculé APRÈS le reverse → dernier = le plus récent
             const isLatest = index === newMatchIds.length - 1;
 
-            // Récupérer la date du match depuis la BDD ou l'API
-            // On passe les timestamps à processNewMatch pour décider
-            await processNewMatch(player, matchId, isLatest, { now, LIMIT_30J, LIMIT_7J });
-            player = db.prepare(`SELECT * FROM players WHERE id = ?`).get(player.id);
-        }
+            await processNewMatch(currentPlayer, matchId, isLatest);
 
-        db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`).run(matchIds[0], player.id);
+            // Rafraîchir les données du joueur (LP/rank mis à jour par processNewMatch)
+            currentPlayer = db.prepare(`SELECT * FROM players WHERE id = ?`).get(player.id);
+        }
 
     } catch (error) {
         logger.error('MONITOR', `Erreur vérification ${player.riot_id}`, {
@@ -709,6 +708,7 @@ async function checkPlayerNewMatches(player) {
         });
     }
 }
+
 
 
 function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
@@ -951,31 +951,75 @@ async function sendRankChangeNotification(
 
 //  FONCTION POUR CALCULER LES VRAIS CHANGEMENTS DE LP
 function calculateLPChange(oldRank, oldLP, newRank, newLP) {
-    // Si même rang : calcul normal
+    const isHighElo = (rank) => {
+        if (!rank) return false;
+        const r = rank.toLowerCase();
+        return r.includes('master') || r.includes('grandmaster') || r.includes('challenger');
+    };
+
+    // Master+ : pas de divisions, LP libres (peuvent dépasser 100)
+    const safeOldLP = isHighElo(oldRank) ? Math.max(oldLP, 0) : Math.min(Math.max(oldLP, 0), 100);
+    const safeNewLP = isHighElo(newRank) ? Math.max(newLP, 0) : Math.min(Math.max(newLP, 0), 100);
+
     if (oldRank === newRank) {
-        return newLP - oldLP;
+        return safeNewLP - safeOldLP;
     }
 
-    // Si changement de rang : détecter promo/rétro
-    const oldRankData = getRankOrder(oldRank, oldLP);
-    const newRankData = getRankOrder(newRank, newLP);
+    const oldRankData = getRankOrder(oldRank, safeOldLP);
+    const newRankData = getRankOrder(newRank, safeNewLP);
 
     if (newRankData.totalScore > oldRankData.totalScore) {
-        //  PROMOTION
-        const lpToPromo = 100 - oldLP;
-        return lpToPromo + newLP;
+        const lpToPromo = 100 - safeOldLP;
+        return lpToPromo + safeNewLP;
     } else if (newRankData.totalScore < oldRankData.totalScore) {
-        //  RÉTROGRADATION
-        const lpLostToZero = oldLP;
-        const lpLostFromDemotion = 100 - newLP;
+        const lpLostToZero = safeOldLP;
+        const lpLostFromDemotion = 100 - safeNewLP;
         return -(lpLostToZero + lpLostFromDemotion);
     }
 
     return 0;
 }
 
+
+
+// ─── Helper : retry avec gestion rate limit ───────────────────────────────────
+async function riotGet(url, retries = 2) {
+    for (let i = 0; i <= retries; i++) {
+        try {
+            return await axios.get(url, { headers: { "X-Riot-Token": RIOT_API_KEY } });
+        } catch (err) {
+            const status = err.response?.status;
+            if (status === 429 && i < retries) {
+                const retryAfter = (err.response.headers['retry-after'] ?? 5) * 1000;
+                logger.warn('API', `Rate limit 429 — retry dans ${retryAfter}ms (tentative ${i + 1}/${retries})`, { url });
+                await new Promise(r => setTimeout(r, retryAfter));
+                continue;
+            }
+            throw err;
+        }
+    }
+}
+
+
+// ─── Fetch timeline en arrière-plan ──────────────────────────────────────────
+async function fetchAndCacheTimeline(matchId) {
+    try {
+        const timelineResponse = await riotGet(
+            `https://europe.api.riotgames.com/lol/match/v5/matches/${matchId}/timeline`
+        );
+        setTimelineCache(matchId, timelineResponse.data);
+        logger.info('MONITOR', `Timeline cachée pour ${matchId}`);
+    } catch (error) {
+        logger.warn('MONITOR', `Échec cache timeline pour ${matchId}`, { message: error.message });
+    }
+}
+
+
+// ─── Traitement d'un match ────────────────────────────────────────────────────
 async function processNewMatch(player, matchId, isLatest = false) {
     try {
+
+        // ── Vérification doublon BDD ──────────────────────────────────────────
         const existingMatch = db.prepare(
             `SELECT id FROM match_history WHERE match_id = ? AND player_id = ?`
         ).get(matchId, player.id);
@@ -985,23 +1029,24 @@ async function processNewMatch(player, matchId, isLatest = false) {
             return;
         }
 
-        const matchResponse = await axios.get(
-            `https://europe.api.riotgames.com/lol/match/v5/matches/${matchId}`,
-            { headers: { "X-Riot-Token": RIOT_API_KEY } },
+        // ── Récupération du match ─────────────────────────────────────────────
+        const matchResponse = await riotGet(
+            `https://europe.api.riotgames.com/lol/match/v5/matches/${matchId}`
         );
         const match = matchResponse.data;
 
+        // ── Filtrage SoloQ uniquement ─────────────────────────────────────────
         if (match.info.queueId !== 420) {
             logger.info('MONITOR', `Match ${matchId} ignoré (pas soloQ)`);
             db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`).run(matchId, player.id);
             return;
         }
 
-        // Vérification de l'âge du match
-        const now = Date.now();
-        const gameAge = now - match.info.gameCreation;
+        // ── Vérification de l'âge du match ───────────────────────────────────
+        const now       = Date.now();
+        const gameAge   = now - match.info.gameCreation;
         const LIMIT_30J = 30 * 24 * 60 * 60 * 1000;
-        const LIMIT_7J = 7 * 24 * 60 * 60 * 1000;
+        const LIMIT_7J  =  7 * 24 * 60 * 60 * 1000;
 
         if (gameAge > LIMIT_30J) {
             logger.info('MONITOR', `Match ${matchId} ignoré (> 30 jours)`, { player: player.riot_id });
@@ -1009,43 +1054,73 @@ async function processNewMatch(player, matchId, isLatest = false) {
             return;
         }
 
+        // ── Récupération du participant ───────────────────────────────────────
         const participant = match.info.participants.find(p => p.puuid === player.puuid);
         if (!participant) {
-            logger.error('MONITOR', `Participant introuvable dans ${matchId}`);
+            logger.error('MONITOR', `Participant introuvable dans ${matchId}`, { player: player.riot_id });
             return;
         }
 
-        setMatchCache(matchId, match.info);
-        fetchAndCacheTimeline(matchId);
+        // ── Helper détection high elo ─────────────────────────────────────────
+        const isHighElo = (rank) => {
+            if (!rank) return false;
+            const r = rank.toLowerCase();
+            return r.includes('master') || r.includes('grandmaster') || r.includes('challenger');
+        };
 
-        const oldLP = player.last_lp || 0;
-        const oldRank = player.last_rank || "UNRANKED";
+        const oldLP   = player.last_lp   || 0;
+        const oldRank = player.last_rank  || "UNRANKED";
 
-        let currentLP, currentRank;
+        let currentLP, currentRank, finalLpChange;
 
+        // ── FIX #1 : ranked call AVANT l'insertion BDD ───────────────────────
+        // Si l'API échoue ici, rien n'est écrit en BDD
         if (isLatest) {
-            const rankedResponse = await axios.get(
-                `https://euw1.api.riotgames.com/lol/league/v4/entries/by-puuid/${player.puuid}`,
-                { headers: { "X-Riot-Token": RIOT_API_KEY } },
+            const rankedResponse = await riotGet(
+                `https://euw1.api.riotgames.com/lol/league/v4/entries/by-puuid/${player.puuid}`
             );
             const rankedData = rankedResponse.data.find(e => e.queueType === "RANKED_SOLO_5x5");
-            currentLP = rankedData?.leaguePoints ?? 0;
-            currentRank = rankedData ? `${rankedData.tier} ${rankedData.rank}` : "UNRANKED";
+
+            currentLP     = rankedData?.leaguePoints ?? 0;
+            currentRank   = rankedData ? `${rankedData.tier} ${rankedData.rank}` : "UNRANKED";
+            finalLpChange = calculateLPChange(oldRank, oldLP, currentRank, currentLP);
+
+            logger.info('MONITOR', `LP réels récupérés via API pour ${player.riot_id}`, {
+                oldRank, oldLP, currentRank, currentLP, finalLpChange
+            });
+
         } else {
-            const ratingChange = participant.challenges?.ratingChange ?? null;
-            const estimatedChange = ratingChange !== null ? Math.round(ratingChange) : (participant.win ? 20 : -20);
-            currentLP = Math.max(0, oldLP + estimatedChange);
-            currentRank = oldRank;
+            // ── FIX #2 : estimation améliorée pour les matchs en retard ──────
+            // ratingChange n'est pas fiable → vérification stricte du type
+            const ratingChange = (typeof participant.challenges?.ratingChange === 'number')
+                ? Math.round(participant.challenges.ratingChange)
+                : null;
+
+            const estimatedChange = ratingChange ?? (participant.win ? 20 : -20);
+            const rawLP = oldLP + estimatedChange;
 
             logger.info('MONITOR', `Match en retard ${matchId} — LP estimé`, {
-                oldLP, estimatedChange, currentLP,
-                source: ratingChange !== null ? 'ratingChange' : 'fallback'
+                oldLP, estimatedChange, rawLP,
+                source: ratingChange !== null ? 'ratingChange' : 'fallback±20'
             });
+
+            // ── FIX #3 : on ne corrompt pas la BDD en cas de promo/rétro ─────
+            // On conserve les valeurs connues — le prochain isLatest corrigera
+            if ((rawLP >= 100 || rawLP < 0) && !isHighElo(oldRank)) {
+                currentLP     = oldLP;
+                currentRank   = oldRank;
+                finalLpChange = estimatedChange;
+                logger.warn('MONITOR', `Promo/rétro probable pour ${player.riot_id} — LP conservés jusqu'au prochain match réel`, {
+                    matchId, rawLP, estimatedChange
+                });
+            } else {
+                currentLP     = Math.max(0, rawLP);
+                currentRank   = oldRank;
+                finalLpChange = estimatedChange;
+            }
         }
 
-        const lpChange = calculateLPChange(oldRank, oldLP, currentRank, currentLP);
-        const lpChangeText = lpChange > 0 ? `+${lpChange} LP` : `${lpChange} LP`;
-
+        // ── Insertion en BDD (après TOUS les appels API) ──────────────────────
         db.prepare(`
             INSERT INTO match_history (
                 player_id, match_id, champion_id, champion_name,
@@ -1058,21 +1133,30 @@ async function processNewMatch(player, matchId, isLatest = false) {
             participant.championId, participant.championName,
             participant.kills, participant.deaths, participant.assists,
             participant.win ? 1 : 0,
-            lpChange,
+            finalLpChange,
             oldRank, currentRank,
             oldLP, currentLP,
             match.info.gameDuration,
             match.info.gameCreation
         );
 
-        logger.info('MONITOR', `Match ${matchId} stocké pour ${player.riot_id}`);
+        logger.info('MONITOR', `Match ${matchId} stocké en BDD pour ${player.riot_id}`);
 
-        // Notification uniquement si < 7 jours
+        // ── FIX #4 : cache + notification uniquement si match < 7 jours ──────
         if (gameAge <= LIMIT_7J) {
+
+            // Cache match + timeline (fire-and-forget)
+            setMatchCache(matchId, match.info);
+            fetchAndCacheTimeline(matchId).catch(err =>
+                logger.warn('MONITOR', `Timeline ignorée pour ${matchId}`, { error: err.message })
+            );
+
+            // ── Construction de l'embed ───────────────────────────────────────
             const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
             const clickablePlayerName = `[**${player.riot_id}**](https://dpm.lol/${riotIdFormatted})`;
-            const rankChange = player.last_rank !== currentRank
-                ? `\n🏆 **${player.last_rank}** → **${currentRank}**`
+            const lpChangeText = finalLpChange >= 0 ? `+${finalLpChange} LP` : `${finalLpChange} LP`;
+            const rankChange   = oldRank !== currentRank
+                ? `\n🏆 **${oldRank}** → **${currentRank}**`
                 : "";
 
             const embed = new EmbedBuilder()
@@ -1094,7 +1178,7 @@ async function processNewMatch(player, matchId, isLatest = false) {
                         name: "⏱️ Durée",
                         value: `${Math.floor(match.info.gameDuration / 60)}min`,
                         inline: true,
-                    },
+                    }
                 )
                 .setTimestamp()
                 .setFooter({ text: `Match ID: ${matchId}` });
@@ -1106,46 +1190,49 @@ async function processNewMatch(player, matchId, isLatest = false) {
                     .setStyle(ButtonStyle.Secondary)
             );
 
-            const channel = await client.channels.fetch(player.channel_id);
-            await channel.send({ embeds: [embed], components: [row] });
+            // ── FIX #5 : channel.fetch avec catch dédié ───────────────────────
+            // Si le channel est supprimé, on ne bloque pas la mise à jour BDD
+            const channel = await client.channels.fetch(player.channel_id).catch(() => null);
 
-            if (player.last_rank && player.last_rank !== currentRank) {
-                await sendRankChangeNotification(player, player.last_rank, currentRank, oldLP, currentLP, channel);
+            if (channel) {
+                await channel.send({ embeds: [embed], components: [row] });
+
+                // ── Notification changement de rang ───────────────────────────
+                if (oldRank && oldRank !== currentRank) {
+                    await sendRankChangeNotification(
+                        player, oldRank, currentRank, oldLP, currentLP, channel
+                    );
+                }
+            } else {
+                logger.warn('MONITOR', `Channel introuvable pour ${player.riot_id} — notification ignorée`, {
+                    channelId: player.channel_id
+                });
             }
+
         } else {
-            logger.info('MONITOR', `Match ${matchId} stocké sans notification (> 7 jours)`, { player: player.riot_id });
+            logger.info('MONITOR', `Match ${matchId} stocké sans notification (> 7 jours)`, {
+                player: player.riot_id
+            });
         }
 
+        // ── Mise à jour joueur en BDD ─────────────────────────────────────────
         db.prepare(`
-            UPDATE players 
+            UPDATE players
             SET last_match_id = ?, last_lp = ?, last_rank = ?, last_update = ?
             WHERE id = ?
         `).run(matchId, currentLP, currentRank, Date.now(), player.id);
 
-        logger.info('MONITOR', `Traitement complet pour ${player.riot_id}`, {
-            match: matchId, rank: currentRank, lp: currentLP, lpChange, isLatest
+        logger.success('MONITOR', `Traitement complet pour ${player.riot_id}`, {
+            match: matchId, rank: currentRank, lp: currentLP, lpChange: finalLpChange, isLatest
         });
 
     } catch (error) {
         logger.error('MONITOR', `Erreur processNewMatch pour ${player.riot_id}`, {
-            matchId, message: error.message, status: error.response?.status ?? null
+            matchId,
+            message: error.message,
+            status: error.response?.status ?? null
         });
         throw error;
-    }
-}
-
-
-// Fonction séparée pour fetch la timeline en arrière-plan
-async function fetchAndCacheTimeline(matchId) {
-    try {
-        const timelineResponse = await axios.get(
-            `https://europe.api.riotgames.com/lol/match/v5/matches/${matchId}/timeline`,
-            { headers: { "X-Riot-Token": RIOT_API_KEY } },
-        );
-        setTimelineCache(matchId, timelineResponse.data);
-        logger.info('MONITOR', `Timeline cachée pour ${matchId}`);
-    } catch (error) {
-        logger.warn('MONITOR', `Échec cache timeline pour ${matchId}`, { message: error.message });
     }
 }
 
@@ -1182,7 +1269,7 @@ async function testRiotAPI() {
     } catch (error) {
         logger.error('API', `Riot API KO`, { status: error.response?.status });
         if (error.response?.status === 403) {
-            logger.error('API', `Clé expirée ou invalide - Va régénérer sur developer.riotgames.com`);
+            logger.error('API', `Clé expirée ou invalide`);
         }
     }
 
