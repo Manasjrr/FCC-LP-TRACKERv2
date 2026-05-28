@@ -1184,7 +1184,7 @@ async function testRiotAPI() {
     if (status === false) {
         try {
             const user = await client.users.fetch('414354252236849172');
-            await user.send('🚨 **API RIOT DOWN** - La clé API ne fonctionne plus !');
+            await user.send('**API RIOT DOWN** - La clé API ne fonctionne plus !');
             logger.info('API', `MP d'alerte envoyé`);
         } catch (error) {
             logger.error('API', `Erreur envoi MP alerte`, { message: error.message });
