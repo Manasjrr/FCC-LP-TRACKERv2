@@ -27,7 +27,6 @@ console.log(
     "RIOT_API_KEY:",
     process.env.RIOT_API_KEY ? "Définie" : "MANQUANTE",
 );
-//console.log(" Longueur clé:", process.env.RIOT_API_KEY?.length);
 
 const { REST } = require("@discordjs/rest");
 const axios = require("axios");
