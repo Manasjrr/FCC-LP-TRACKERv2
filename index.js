@@ -687,13 +687,21 @@ async function checkPlayerNewMatches(player) {
             matches: newMatchIds
         });
 
+        const now = Date.now();
+        const LIMIT_30J = 30 * 24 * 60 * 60 * 1000;
+        const LIMIT_7J = 7 * 24 * 60 * 60 * 1000;
+
         // Du plus ancien au plus récent
         for (const [index, matchId] of newMatchIds.entries()) {
             const isLatest = index === newMatchIds.length - 1;
-            await processNewMatch(player, matchId, isLatest);
+
+            // Récupérer la date du match depuis la BDD ou l'API
+            // On passe les timestamps à processNewMatch pour décider
+            await processNewMatch(player, matchId, isLatest, { now, LIMIT_30J, LIMIT_7J });
             player = db.prepare(`SELECT * FROM players WHERE id = ?`).get(player.id);
         }
 
+        db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`).run(matchIds[0], player.id);
 
     } catch (error) {
         logger.error('MONITOR', `Erreur vérification ${player.riot_id}`, {
@@ -701,8 +709,6 @@ async function checkPlayerNewMatches(player) {
         });
     }
 }
-
-
 
 
 function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
@@ -991,6 +997,18 @@ async function processNewMatch(player, matchId, isLatest = false) {
             return;
         }
 
+        // Vérification de l'âge du match
+        const now = Date.now();
+        const gameAge = now - match.info.gameCreation;
+        const LIMIT_30J = 30 * 24 * 60 * 60 * 1000;
+        const LIMIT_7J = 7 * 24 * 60 * 60 * 1000;
+
+        if (gameAge > LIMIT_30J) {
+            logger.info('MONITOR', `Match ${matchId} ignoré (> 30 jours)`, { player: player.riot_id });
+            db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`).run(matchId, player.id);
+            return;
+        }
+
         const participant = match.info.participants.find(p => p.puuid === player.puuid);
         if (!participant) {
             logger.error('MONITOR', `Participant introuvable dans ${matchId}`);
@@ -1006,7 +1024,6 @@ async function processNewMatch(player, matchId, isLatest = false) {
         let currentLP, currentRank;
 
         if (isLatest) {
-            // ✅ Dernier match : rang réel depuis l'API
             const rankedResponse = await axios.get(
                 `https://euw1.api.riotgames.com/lol/league/v4/entries/by-puuid/${player.puuid}`,
                 { headers: { "X-Riot-Token": RIOT_API_KEY } },
@@ -1015,7 +1032,6 @@ async function processNewMatch(player, matchId, isLatest = false) {
             currentLP = rankedData?.leaguePoints ?? 0;
             currentRank = rankedData ? `${rankedData.tier} ${rankedData.rank}` : "UNRANKED";
         } else {
-            // ✅ Match en retard : estimation via ratingChange des challenges
             const ratingChange = participant.challenges?.ratingChange ?? null;
             const estimatedChange = ratingChange !== null ? Math.round(ratingChange) : (participant.win ? 20 : -20);
             currentLP = Math.max(0, oldLP + estimatedChange);
@@ -1051,48 +1067,53 @@ async function processNewMatch(player, matchId, isLatest = false) {
 
         logger.info('MONITOR', `Match ${matchId} stocké pour ${player.riot_id}`);
 
-        const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
-        const clickablePlayerName = `[**${player.riot_id}**](https://dpm.lol/${riotIdFormatted})`;
-        const rankChange = player.last_rank !== currentRank
-            ? `\n🏆 **${player.last_rank}** → **${currentRank}**`
-            : "";
+        // Notification uniquement si < 7 jours
+        if (gameAge <= LIMIT_7J) {
+            const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
+            const clickablePlayerName = `[**${player.riot_id}**](https://dpm.lol/${riotIdFormatted})`;
+            const rankChange = player.last_rank !== currentRank
+                ? `\n🏆 **${player.last_rank}** → **${currentRank}**`
+                : "";
 
-        const embed = new EmbedBuilder()
-            .setTitle(participant.win ? "🟢 VICTOIRE" : "🔴 DÉFAITE")
-            .setDescription(`${clickablePlayerName} vient de finir une partie !`)
-            .setColor(participant.win ? 0x00ff00 : 0xff0000)
-            .addFields(
-                {
-                    name: "🎯 Performance",
-                    value: `**${participant.kills}/${participant.deaths}/${participant.assists}** KDA\n🏆 ${participant.championName} (Niv.${participant.champLevel})`,
-                    inline: true,
-                },
-                {
-                    name: "📊 LP Change",
-                    value: `**${lpChangeText}**\n${currentRank} (${currentLP} LP)${rankChange}`,
-                    inline: true,
-                },
-                {
-                    name: "⏱️ Durée",
-                    value: `${Math.floor(match.info.gameDuration / 60)}min`,
-                    inline: true,
-                },
-            )
-            .setTimestamp()
-            .setFooter({ text: `Match ID: ${matchId}` });
+            const embed = new EmbedBuilder()
+                .setTitle(participant.win ? "🟢 VICTOIRE" : "🔴 DÉFAITE")
+                .setDescription(`${clickablePlayerName} vient de finir une partie !`)
+                .setColor(participant.win ? 0x00ff00 : 0xff0000)
+                .addFields(
+                    {
+                        name: "🎯 Performance",
+                        value: `**${participant.kills}/${participant.deaths}/${participant.assists}** KDA\n🏆 ${participant.championName} (Niv.${participant.champLevel})`,
+                        inline: true,
+                    },
+                    {
+                        name: "📊 LP Change",
+                        value: `**${lpChangeText}**\n${currentRank} (${currentLP} LP)${rankChange}`,
+                        inline: true,
+                    },
+                    {
+                        name: "⏱️ Durée",
+                        value: `${Math.floor(match.info.gameDuration / 60)}min`,
+                        inline: true,
+                    },
+                )
+                .setTimestamp()
+                .setFooter({ text: `Match ID: ${matchId}` });
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId(`stats|${matchId}|${player.puuid}`)
-                .setLabel("📊 Stats détaillées")
-                .setStyle(ButtonStyle.Secondary)
-        );
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`stats|${matchId}|${player.puuid}`)
+                    .setLabel("📊 Stats détaillées")
+                    .setStyle(ButtonStyle.Secondary)
+            );
 
-        const channel = await client.channels.fetch(player.channel_id);
-        await channel.send({ embeds: [embed], components: [row] });
+            const channel = await client.channels.fetch(player.channel_id);
+            await channel.send({ embeds: [embed], components: [row] });
 
-        if (player.last_rank && player.last_rank !== currentRank) {
-            await sendRankChangeNotification(player, player.last_rank, currentRank, oldLP, currentLP, channel);
+            if (player.last_rank && player.last_rank !== currentRank) {
+                await sendRankChangeNotification(player, player.last_rank, currentRank, oldLP, currentLP, channel);
+            }
+        } else {
+            logger.info('MONITOR', `Match ${matchId} stocké sans notification (> 7 jours)`, { player: player.riot_id });
         }
 
         db.prepare(`
