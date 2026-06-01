@@ -1,8 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const axios = require("axios");
+const { getAccountByRiotId, getRecentMatchIds, getRankedDataByPuuid } = require("../services/riotApiService");
 const logger = require("../utils/loggers");
-
-const RIOT_API_KEY = process.env.RIOT_API_KEY;
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -47,38 +45,25 @@ module.exports = {
     // ── Appels API Riot ───────────────────────────────────────────────────
     try {
       // 1) PUUID
-      logger.api('RIOT', `GET account by riot-id : ${riotId}`);
-      const accountResponse = await axios.get(
-        `https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${gameName}/${tagLine}`,
-        { headers: { "X-Riot-Token": RIOT_API_KEY } }
-      );
-      const puuid = accountResponse.data.puuid;
-      logger.api('RIOT', `PUUID récupéré pour ${riotId}`, { puuid: puuid.substring(0, 8) + '...' });
+      const account = await getAccountByRiotId(gameName, tagLine);
+      const puuid = account.puuid;
+      logger.info('COMMAND', `PUUID récupéré pour ${riotId}`, { puuid: puuid.substring(0, 8) + '...' });
 
-      // 2) Dernier match + Ranked en parallèle (économise une requête)
-      logger.api('RIOT', `GET dernier match + ranked en parallèle pour ${riotId}`);
-      const [matchesResponse, rankedResponse] = await Promise.all([
-        axios.get(
-          `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=420&count=1`,
-          { headers: { "X-Riot-Token": RIOT_API_KEY } }
-        ),
-        axios.get(
-          `https://euw1.api.riotgames.com/lol/league/v4/entries/by-puuid/${puuid}`,
-          { headers: { "X-Riot-Token": RIOT_API_KEY } }
-        ),
+      // 2) Dernier match + Ranked en parallèle
+      const [matchIds, rankedData] = await Promise.all([
+        getRecentMatchIds(puuid, 1),
+        getRankedDataByPuuid(puuid),
       ]);
 
       // ── Traitement des données ────────────────────────────────────────
-      const lastMatchId = matchesResponse.data[0] ?? null;
+      const lastMatchId = matchIds[0] ?? null;
       if (lastMatchId) {
         logger.info('COMMAND', `Dernier match trouvé pour ${riotId}`, { matchId: lastMatchId });
       } else {
         logger.info('COMMAND', `Aucun match trouvé pour ${riotId}, initialisation sans match`);
       }
 
-      const soloQueueEntry = rankedResponse.data.find(
-        (entry) => entry.queueType === "RANKED_SOLO_5x5"
-      );
+      const soloQueueEntry = rankedData.find((e) => e.queueType === "RANKED_SOLO_5x5") ?? null;
       const currentRank = soloQueueEntry
         ? `${soloQueueEntry.tier} ${soloQueueEntry.rank}`
         : "Non classé";
@@ -92,12 +77,12 @@ module.exports = {
 
       // ── Insertion en BDD ──────────────────────────────────────────────
       global.db.prepare(`
-            INSERT INTO players (
-                user_id, guild_id, channel_id,
-                riot_id, puuid,
-                last_match_id, last_lp, last_rank
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+                INSERT INTO players (
+                    user_id, guild_id, channel_id,
+                    riot_id, puuid,
+                    last_match_id, last_lp, last_rank
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
         interaction.user.id,
         interaction.guildId,
         interaction.channelId,

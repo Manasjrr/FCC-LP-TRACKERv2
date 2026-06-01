@@ -8,12 +8,13 @@ const {
 const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
 const axios = require("axios");
 const logger = require("../utils/loggers");
+const { getSummonerByPuuid, getSoloQData, getChampionMasteries } = require("../services/riotApiService");
 
 // ─────────────────────────────────────────
 //  CACHE
 // ─────────────────────────────────────────
 const statsCache = new Map();
-const CACHE_DURATION         = 10 * 60 * 1000;
+const CACHE_DURATION = 10 * 60 * 1000;
 const MASTERY_CACHE_DURATION = 30 * 60 * 1000;
 const CACHE_CLEANUP_INTERVAL = 15 * 60 * 1000;
 
@@ -85,7 +86,7 @@ module.exports = {
 
         if (!global.db) {
             logger.error('DB', `Base de données non disponible pour /stats`, { guild: interaction.guildId });
-            return interaction.editReply("❌ Base de données indisponible").catch(() => {});
+            return interaction.editReply("❌ Base de données indisponible").catch(() => { });
         }
 
         let targetPlayer = null;
@@ -141,7 +142,7 @@ module.exports = {
                 guild: interaction.guildId
             });
             const fallbackEmbed = createLocalStatsEmbed(targetPlayer);
-            await interaction.editReply({ embeds: [fallbackEmbed] }).catch(() => {});
+            await interaction.editReply({ embeds: [fallbackEmbed] }).catch(() => { });
         }
     },
 };
@@ -192,8 +193,8 @@ function getServerPosition(targetRiotId, guildId) {
         return (rB.lp || 0) - (rA.lp || 0);
     });
 
-    const position   = rows.findIndex((p) => p.riot_id === targetRiotId) + 1;
-    const total      = rows.length;
+    const position = rows.findIndex((p) => p.riot_id === targetRiotId) + 1;
+    const total = rows.length;
     const percentile = total > 0 ? Math.round((position / total) * 100) : 0;
 
     return { position, total, percentile };
@@ -204,28 +205,18 @@ function getServerPosition(targetRiotId, guildId) {
 // ─────────────────────────────────────────
 async function getPlayerCurrentStats(player) {
     const cacheKey = `current_${player.puuid}`;
-    const cached   = statsCache.get(cacheKey);
+    const cached = statsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
         logger.info('CACHE', `Hit cache stats pour ${player.riot_id}`);
         return cached.data;
     }
 
-    const RIOT_API_KEY = process.env.RIOT_API_KEY;
-
     try {
-        const [summonerRes, rankedRes] = await Promise.all([
-            axios.get(
-                `https://euw1.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${player.puuid}`,
-                { headers: { "X-Riot-Token": RIOT_API_KEY }, timeout: 10_000 }
-            ),
-            axios.get(
-                `https://euw1.api.riotgames.com/lol/league/v4/entries/by-puuid/${player.puuid}`,
-                { headers: { "X-Riot-Token": RIOT_API_KEY }, timeout: 10_000 }
-            ),
+        const [summoner, soloQData] = await Promise.all([
+            getSummonerByPuuid(player.puuid),
+            getSoloQData(player.puuid),
         ]);
 
-        const summoner   = summonerRes.data;
-        const soloQData  = rankedRes.data.find((e) => e.queueType === "RANKED_SOLO_5x5") ?? null;
         const totalGames = soloQData ? soloQData.wins + soloQData.losses : 0;
 
         const result = {
@@ -236,13 +227,13 @@ async function getPlayerCurrentStats(player) {
                     ? `${summoner.gameName}#${summoner.tagLine}`
                     : (summoner.name || player.riot_id),
             },
-            ranked:      soloQData,
+            ranked: soloQData,
             currentRank: soloQData ? `${soloQData.tier} ${soloQData.rank}` : "UNRANKED",
-            currentLP:   soloQData?.leaguePoints ?? 0,
-            wins:        soloQData?.wins          ?? 0,
-            losses:      soloQData?.losses        ?? 0,
-            winrate:     totalGames > 0 ? Math.round((soloQData.wins / totalGames) * 100) : 0,
-            isLocal:     false,
+            currentLP: soloQData?.leaguePoints ?? 0,
+            wins: soloQData?.wins ?? 0,
+            losses: soloQData?.losses ?? 0,
+            winrate: totalGames > 0 ? Math.round((soloQData.wins / totalGames) * 100) : 0,
+            isLocal: false,
         };
 
         statsCache.set(cacheKey, { data: result, timestamp: Date.now() });
@@ -260,10 +251,10 @@ async function getPlayerCurrentStats(player) {
         });
 
         const fallback = {
-            summoner:    null,
-            ranked:      null,
+            summoner: null,
+            ranked: null,
             currentRank: player.last_rank ?? "UNRANKED",
-            currentLP:   player.last_lp   ?? 0,
+            currentLP: player.last_lp ?? 0,
             wins: 0, losses: 0, winrate: 0,
             isLocal: true,
         };
@@ -277,12 +268,13 @@ async function getPlayerCurrentStats(player) {
     }
 }
 
+
 // ─────────────────────────────────────────
 //  ANALYSE DES MATCHS
 // ─────────────────────────────────────────
 function getMatchAnalysis(player) {
     const cacheKey = `analysis_${player.id}`;
-    const cached   = statsCache.get(cacheKey);
+    const cached = statsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
         logger.info('CACHE', `Hit cache analyse pour ${player.riot_id}`);
         return cached.data;
@@ -313,7 +305,7 @@ function getMatchAnalysis(player) {
     `).all(player.id);
 
     let currentStreak = 0;
-    let streakType    = "none";
+    let streakType = "none";
 
     if (recentMatches.length > 0) {
         const firstResult = recentMatches[0].win;
@@ -325,30 +317,30 @@ function getMatchAnalysis(player) {
     }
 
     const totalGames = agg.total_games ?? 0;
-    const wins       = agg.wins        ?? 0;
-    const avgKDANum  = (agg.avg_deaths ?? 0) > 0
+    const wins = agg.wins ?? 0;
+    const avgKDANum = (agg.avg_deaths ?? 0) > 0
         ? ((agg.avg_kills ?? 0) + (agg.avg_assists ?? 0)) / agg.avg_deaths
         : null;
 
     const analysis = {
         totalGames,
         wins,
-        losses:       totalGames - wins,
-        winrate:      totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0,
-        avgKDA:       avgKDANum !== null ? Number(avgKDANum.toFixed(1)) : "Perfect",
-        avgKills:     Math.round(agg.avg_kills   ?? 0),
-        avgDeaths:    Math.round(agg.avg_deaths  ?? 0),
-        avgAssists:   Math.round(agg.avg_assists ?? 0),
-        lpChange:     Math.round(agg.total_lp_change ?? 0),
+        losses: totalGames - wins,
+        winrate: totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0,
+        avgKDA: avgKDANum !== null ? Number(avgKDANum.toFixed(1)) : "Perfect",
+        avgKills: Math.round(agg.avg_kills ?? 0),
+        avgDeaths: Math.round(agg.avg_deaths ?? 0),
+        avgAssists: Math.round(agg.avg_assists ?? 0),
+        lpChange: Math.round(agg.total_lp_change ?? 0),
         currentStreak,
         streakType,
         performanceLevel: getPerformanceLevel({
             recentWinrate: totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0,
             globalWinrate: totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0,
-            avgKDA:        avgKDANum ?? 0,
+            avgKDA: avgKDANum ?? 0,
             currentStreak,
             streakType,
-            lpTrend:    agg.total_lp_change ?? 0,
+            lpTrend: agg.total_lp_change ?? 0,
             totalGames,
         }),
     };
@@ -369,55 +361,55 @@ function getMatchAnalysis(player) {
 function getPerformanceLevel({
     recentWinrate = 0,
     globalWinrate = 0,
-    avgKDA        = 0,
+    avgKDA = 0,
     currentStreak = 0,
-    streakType    = "none",
-    lpTrend       = 0,
-    totalGames    = 0,
+    streakType = "none",
+    lpTrend = 0,
+    totalGames = 0,
 } = {}) {
-    let score       = 0;
+    let score = 0;
     let bonusPoints = 0;
-    let penalties   = 0;
+    let penalties = 0;
 
-    if      (recentWinrate >= 80) score += 3;
+    if (recentWinrate >= 80) score += 3;
     else if (recentWinrate >= 70) score += 2.5;
     else if (recentWinrate >= 60) score += 2;
     else if (recentWinrate >= 50) score += 1;
     else if (recentWinrate >= 40) score -= 1;
 
-    if      (globalWinrate >= 65) score += 3;
+    if (globalWinrate >= 65) score += 3;
     else if (globalWinrate >= 55) score += 2;
     else if (globalWinrate >= 50) score += 1.5;
     else if (globalWinrate >= 45) score += 1;
-    else                          score -= 2;
+    else score -= 2;
 
     const kdaNum = typeof avgKDA === "string" ? 99 : avgKDA;
-    if      (kdaNum >= 3.5) score += 2.5;
+    if (kdaNum >= 3.5) score += 2.5;
     else if (kdaNum >= 2.5) score += 2;
     else if (kdaNum >= 2.0) score += 1;
     else if (kdaNum >= 1.5) score += 0;
     else if (kdaNum >= 1.0) score -= 2;
 
     if (streakType === "win") {
-        if      (currentStreak >= 7) bonusPoints += 1;
+        if (currentStreak >= 7) bonusPoints += 1;
         else if (currentStreak >= 5) bonusPoints += 0.5;
         else if (currentStreak >= 3) bonusPoints += 0.25;
     } else if (streakType === "loss") {
-        if      (currentStreak >= 5) penalties += 5;
+        if (currentStreak >= 5) penalties += 5;
         else if (currentStreak >= 3) penalties += 1;
     }
 
-    if      (lpTrend >  100) bonusPoints += 0.75;
-    else if (lpTrend < -100) penalties   += 0.5;
+    if (lpTrend > 100) bonusPoints += 0.75;
+    else if (lpTrend < -100) penalties += 0.5;
 
     const finalScore = Math.max(0, score + bonusPoints - penalties);
 
-    if      (finalScore >= 8.5) return { level: "🌟 CANNA-MESSI-CR7", color: 0xF0E68C };
-    else if (finalScore >= 7.0) return { level: "🔥 EXCELLENT",        color: 0x8500FF };
-    else if (finalScore >= 5.5) return { level: "⭐ TRES BON",          color: 0x00FF00 };
-    else if (finalScore >= 4.0) return { level: "✅ SOLIDE",             color: 0x00BFFF };
-    else if (finalScore >= 2.5) return { level: "⚡ MOYEN",              color: 0xFFD700 };
-    else                         return { level: "❄️ RAZMO TIER",        color: 0xFF6B6B };
+    if (finalScore >= 8.5) return { level: "🌟 CANNA-MESSI-CR7", color: 0xF0E68C };
+    else if (finalScore >= 7.0) return { level: "🔥 EXCELLENT", color: 0x8500FF };
+    else if (finalScore >= 5.5) return { level: "⭐ TRES BON", color: 0x00FF00 };
+    else if (finalScore >= 4.0) return { level: "✅ SOLIDE", color: 0x00BFFF };
+    else if (finalScore >= 2.5) return { level: "⚡ MOYEN", color: 0xFFD700 };
+    else return { level: "❄️ RAZMO TIER", color: 0xFF6B6B };
 }
 
 // ─────────────────────────────────────────
@@ -442,21 +434,21 @@ function getTopChampionsRecent(player, matchCount = 50) {
         const s = championStats[c];
         s.games++;
         if (match.win) s.wins++;
-        s.totalKills   += match.kills   ?? 0;
-        s.totalDeaths  += match.deaths  ?? 0;
+        s.totalKills += match.kills ?? 0;
+        s.totalDeaths += match.deaths ?? 0;
         s.totalAssists += match.assists ?? 0;
     }
 
     return Object.values(championStats)
         .map((c) => ({
-            name:       c.name,
-            games:      c.games,
-            winrate:    Math.round((c.wins / c.games) * 100),
-            kda:        c.totalDeaths > 0
+            name: c.name,
+            games: c.games,
+            winrate: Math.round((c.wins / c.games) * 100),
+            kda: c.totalDeaths > 0
                 ? ((c.totalKills + c.totalAssists) / c.totalDeaths).toFixed(1)
                 : "Perfect",
-            avgKills:   +(c.totalKills   / c.games).toFixed(1),
-            avgDeaths:  +(c.totalDeaths  / c.games).toFixed(1),
+            avgKills: +(c.totalKills / c.games).toFixed(1),
+            avgDeaths: +(c.totalDeaths / c.games).toFixed(1),
             avgAssists: +(c.totalAssists / c.games).toFixed(1),
         }))
         .sort((a, b) => b.games - a.games)
@@ -468,14 +460,14 @@ function getTopChampionsRecent(player, matchCount = 50) {
 // ─────────────────────────────────────────
 async function getChampionMastery(player) {
     const cacheKey = `mastery_${player.puuid}`;
-    const cached   = statsCache.get(cacheKey);
+    const cached = statsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < MASTERY_CACHE_DURATION) {
         logger.info('CACHE', `Hit cache maîtrise pour ${player.riot_id}`);
         return cached.data;
     }
 
     const RIOT_API_KEY = process.env.RIOT_API_KEY;
-    const masteryData  = {};
+    const masteryData = {};
 
     if (!player.puuid) return masteryData;
 
@@ -513,7 +505,7 @@ async function getChampionMastery(player) {
 //  CONSTRUCTION DE L'EMBED
 // ─────────────────────────────────────────
 async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, interaction) {
-    const rankEmoji   = getRankEmoji(stats.currentRank);
+    const rankEmoji = getRankEmoji(stats.currentRank);
     const performance = analysis.performanceLevel;
 
     const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
@@ -525,9 +517,8 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
 
     const streakText =
         analysis.currentStreak > 0
-            ? `${analysis.streakType === "win" ? "🔥" : "💀"} ${analysis.currentStreak} ${
-                  analysis.streakType === "win" ? "victoires" : "défaites"
-              } consécutives`
+            ? `${analysis.streakType === "win" ? "🔥" : "💀"} ${analysis.currentStreak} ${analysis.streakType === "win" ? "victoires" : "défaites"
+            } consécutives`
             : "➖ Aucune série en cours";
 
     const profileIconUrl = buildProfileIconUrl(stats.summoner?.profileIconId);
@@ -567,12 +558,12 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
 
     if (topChampions.length > 0) {
         const masteryData = await getChampionMastery(player);
-        const medals      = ["🥇", "🥈", "🥉"];
+        const medals = ["🥇", "🥈", "🥉"];
 
         const championsText = topChampions
             .map((champ, i) => {
-                const id     = getChampionIdByName(champ.name);
-                const pts    = (id && masteryData[id]) ? masteryData[id].toLocaleString() + " pts" : "0 pts";
+                const id = getChampionIdByName(champ.name);
+                const pts = (id && masteryData[id]) ? masteryData[id].toLocaleString() + " pts" : "0 pts";
                 const avgKDA = `${champ.avgKills}/${champ.avgDeaths}/${champ.avgAssists}`;
                 return (
                     `${medals[i] ?? "🏅"} **${champ.name}** • ${champ.games}G - ${champ.winrate}% WR • ${pts}\n` +
