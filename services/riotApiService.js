@@ -9,15 +9,33 @@ async function riotGet(url, retries = 2) {
         try {
             return await axios.get(url, {
                 headers: { "X-Riot-Token": RIOT_API_KEY },
+                timeout: 10_000,
             });
         } catch (err) {
             const status = err.response?.status;
+
             if (status === 429 && i < retries) {
                 const retryAfter = (err.response.headers["retry-after"] ?? 5) * 1000;
                 logger.warn("API", `Rate limit 429 — retry dans ${retryAfter}ms (tentative ${i + 1}/${retries})`, { url });
                 await new Promise((r) => setTimeout(r, retryAfter));
                 continue;
             }
+
+            // ✅ FIX : ne pas retry sur les erreurs 4xx (sauf 429)
+            // Avant : une 404 ou 403 était retentée 2 fois inutilement
+            // → gaspillage de quota API + délai inutile
+            if (status >= 400 && status < 500) {
+                throw err;
+            }
+
+            // Retry sur erreurs réseau / 5xx
+            if (i < retries) {
+                const delay = 1000 * (i + 1);
+                logger.warn("API", `Erreur ${status ?? 'réseau'} — retry dans ${delay}ms (tentative ${i + 1}/${retries})`, { url });
+                await new Promise((r) => setTimeout(r, delay));
+                continue;
+            }
+
             throw err;
         }
     }
@@ -90,9 +108,10 @@ async function getChampionMasteries(puuid) {
 // ─── Status API ───────────────────────────────────────────────────────────────
 async function checkApiStatus() {
     try {
-        const res = await axios.get(
-            "https://euw1.api.riotgames.com/lol/status/v4/platform-data",
-            { headers: { "X-Riot-Token": RIOT_API_KEY } }
+        // ✅ FIX : utiliser riotGet pour bénéficier du timeout
+        // Avant : axios.get direct sans timeout → peut bloquer indéfiniment
+        const res = await riotGet(
+            "https://euw1.api.riotgames.com/lol/status/v4/platform-data"
         );
         logger.info("API", `Riot API OK`, { status: res.status });
         return true;

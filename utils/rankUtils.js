@@ -1,22 +1,20 @@
-
-
 function getRankEmoji(rank) {
     if (!rank || rank === "Non classé" || rank === "UNRANKED") return "⚫";
 
     const rankLower = rank.toLowerCase();
 
-    if (rankLower.includes('iron')) return "🔩";      // Fer
-    if (rankLower.includes('bronze')) return "🟫";    // Bronze
-    if (rankLower.includes('silver')) return "⚪";    // Argent
-    if (rankLower.includes('gold')) return "🟨";      // Or
-    if (rankLower.includes('platinum')) return "🔷";  // Platine
-    if (rankLower.includes('emerald')) return "💚";   // Émeraude
-    if (rankLower.includes('diamond')) return "💎";   // Diamant
-    if (rankLower.includes('master')) return "🔮";    // Maître
-    if (rankLower.includes('grandmaster')) return "⭐"; // Grand Maître
-    if (rankLower.includes('challenger')) return "👑"; // Challenger
+    if (rankLower.includes('iron'))        return "🔩";
+    if (rankLower.includes('bronze'))      return "🟫";
+    if (rankLower.includes('silver'))      return "⚪";
+    if (rankLower.includes('gold'))        return "🟨";
+    if (rankLower.includes('platinum'))    return "🔷";
+    if (rankLower.includes('emerald'))     return "💚";
+    if (rankLower.includes('diamond'))     return "💎";
+    if (rankLower.includes('grandmaster')) return "⭐";
+    if (rankLower.includes('master'))      return "🔮";
+    if (rankLower.includes('challenger'))  return "👑";
 
-    return "🏅"; // Défaut
+    return "🏅";
 }
 
 function getRankOrder(rank, lp = 0) {
@@ -28,40 +26,35 @@ function getRankOrder(rank, lp = 0) {
     let tierOrder = 0;
     let divisionOrder = 0;
 
-    // 🏆 Ordre des tiers
-    if (rankLower.includes('iron')) tierOrder = 1;
-    else if (rankLower.includes('bronze')) tierOrder = 2;
-    else if (rankLower.includes('silver')) tierOrder = 3;
-    else if (rankLower.includes('gold')) tierOrder = 4;
-    else if (rankLower.includes('platinum')) tierOrder = 5;
-    else if (rankLower.includes('emerald')) tierOrder = 6;
-    else if (rankLower.includes('diamond')) tierOrder = 7;
-    else if (rankLower.includes('master')) tierOrder = 8;
+    if      (rankLower.includes('iron'))        tierOrder = 1;
+    else if (rankLower.includes('bronze'))      tierOrder = 2;
+    else if (rankLower.includes('silver'))      tierOrder = 3;
+    else if (rankLower.includes('gold'))        tierOrder = 4;
+    else if (rankLower.includes('platinum'))    tierOrder = 5;
+    else if (rankLower.includes('emerald'))     tierOrder = 6;
+    else if (rankLower.includes('diamond'))     tierOrder = 7;
+    // grandmaster AVANT master
     else if (rankLower.includes('grandmaster')) tierOrder = 9;
-    else if (rankLower.includes('challenger')) tierOrder = 10;
+    else if (rankLower.includes('master'))      tierOrder = 8;
+    else if (rankLower.includes('challenger'))  tierOrder = 10;
 
-    // 🎯 Ordre des divisions
-    if (rankLower.includes(' iv')) divisionOrder = 1;
+    if      (rankLower.includes(' iv'))  divisionOrder = 1;
     else if (rankLower.includes(' iii')) divisionOrder = 2;
-    else if (rankLower.includes(' ii')) divisionOrder = 3;
-    else if (rankLower.includes(' i')) divisionOrder = 4;
+    else if (rankLower.includes(' ii'))  divisionOrder = 3;
+    else if (rankLower.includes(' i'))   divisionOrder = 4;
     else divisionOrder = 5; // Master+
 
-    // 📊 CALCUL DU SCORE TOTAL pour coeemparaison facile
     const totalScore = (tierOrder * 400) + (divisionOrder * 100) + lp;
 
-    return { 
-        order: tierOrder, 
-        divisionOrder: divisionOrder, 
-        lp: lp,
-        totalScore: totalScore  // ← Pour comparaisons faciles
+    return {
+        order:         tierOrder,
+        divisionOrder: divisionOrder,
+        lp:            lp,
+        totalScore:    totalScore,
     };
 }
 
-
-// 📤 Exportez-les
 module.exports = {
     getRankEmoji,
     getRankOrder,
-    // ... autres fonctions
 };

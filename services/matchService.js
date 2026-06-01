@@ -11,22 +11,47 @@ const LIMIT_7J  =  7 * 24 * 60 * 60 * 1000;
 function isHighElo(rank) {
     if (!rank) return false;
     const r = rank.toLowerCase();
-    return r.includes("master") || r.includes("grandmaster") || r.includes("challenger");
+
+    // ordre important — grandmaster AVANT master
+    // Sinon "grandmaster".includes("master") === true → mauvaise détection
+    return r.includes("grandmaster") || r.includes("challenger") || r.includes("master");
 }
 
 // ─── Calcul LP change ────────────────────────────────────────────────────────
 function calculateLPChange(oldRank, oldLP, newRank, newLP) {
-    const safeOldLP = isHighElo(oldRank) ? Math.max(oldLP, 0) : Math.min(Math.max(oldLP, 0), 100);
-    const safeNewLP = isHighElo(newRank) ? Math.max(newLP, 0) : Math.min(Math.max(newLP, 0), 100);
+    // Avant : Math.min(LP, 100) coupait les 200+ LP de Master
+    const safeOldLP = isHighElo(oldRank)
+        ? Math.max(oldLP, 0)
+        : Math.min(Math.max(oldLP, 0), 100);
 
+    const safeNewLP = isHighElo(newRank)
+        ? Math.max(newLP, 0)
+        : Math.min(Math.max(newLP, 0), 100);
+
+    // Même rang → différence simple
     if (oldRank === newRank) return safeNewLP - safeOldLP;
 
     const oldData = getRankOrder(oldRank, safeOldLP);
     const newData = getRankOrder(newRank, safeNewLP);
 
+    // Avant : (100 - safeOldLP) + safeNewLP donnait un résultat faux
+    // si oldRank était high elo (ex: Master 200LP → Diamond I 75LP)
     if (newData.totalScore > oldData.totalScore) {
+        // Promotion
+        if (isHighElo(oldRank) || isHighElo(newRank)) {
+            // High elo : on prend juste la différence de totalScore
+            return newData.totalScore - oldData.totalScore;
+        }
+        // Low elo : LP restants jusqu'à 100 + LP dans le nouveau rang
         return (100 - safeOldLP) + safeNewLP;
-    } else if (newData.totalScore < oldData.totalScore) {
+    }
+
+    if (newData.totalScore < oldData.totalScore) {
+        // Rétrogradation
+        if (isHighElo(oldRank) || isHighElo(newRank)) {
+            return newData.totalScore - oldData.totalScore; // valeur négative
+        }
+        // Low elo : LP perdus depuis 0 + LP manquants à 100 dans le nouveau rang
         return -(safeOldLP + (100 - safeNewLP));
     }
 
@@ -46,7 +71,8 @@ async function fetchAndCacheTimeline(matchId) {
 
 // ─── Traitement d'un match ────────────────────────────────────────────────────
 async function processNewMatch(player, matchId, isLatest = false) {
-    // Doublon BDD
+
+    // ── Doublon BDD ──────────────────────────────────────────────────────────
     const existing = global.db
         .prepare(`SELECT id FROM match_history WHERE match_id = ? AND player_id = ?`)
         .get(matchId, player.id);
@@ -56,36 +82,44 @@ async function processNewMatch(player, matchId, isLatest = false) {
         return;
     }
 
-    // Récupération du match
+    // ── Récupération du match ─────────────────────────────────────────────────
     const match = await getMatch(matchId);
 
-    // Filtre SoloQ
+    // ── Filtre SoloQ ──────────────────────────────────────────────────────────
     if (match.info.queueId !== 420) {
         logger.info("MATCH", `Match ${matchId} ignoré (pas soloQ)`);
-        global.db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`).run(matchId, player.id);
+        global.db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`)
+                 .run(matchId, player.id);
         return;
     }
 
-    // Filtre âge
+    // ── Filtre âge ────────────────────────────────────────────────────────────
     const gameAge = Date.now() - match.info.gameCreation;
     if (gameAge > LIMIT_30J) {
         logger.info("MATCH", `Match ${matchId} ignoré (> 30 jours)`);
-        global.db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`).run(matchId, player.id);
+        global.db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`)
+                 .run(matchId, player.id);
         return;
     }
 
-    // Participant
+    // ── Participant ───────────────────────────────────────────────────────────
     const participant = match.info.participants.find((p) => p.puuid === player.puuid);
     if (!participant) {
         logger.error("MATCH", `Participant introuvable dans ${matchId}`, { player: player.riot_id });
+
+        // ✅ FIX : mettre à jour last_match_id même si participant introuvable
+        // Avant : on retournait sans update → le même match était re-fetché
+        // à chaque cycle de monitoring → spam API + boucle infinie
+        global.db.prepare(`UPDATE players SET last_match_id = ? WHERE id = ?`)
+                 .run(matchId, player.id);
         return;
     }
 
-    const oldLP   = player.last_lp   || 0;
-    const oldRank = player.last_rank  || "UNRANKED";
+    const oldLP   = player.last_lp  || 0;
+    const oldRank = player.last_rank || "UNRANKED";
     let currentLP, currentRank, finalLpChange;
 
-    // ── LP réels (dernier match uniquement) ──────────────────────────────────
+    // ── LP réels (dernier match uniquement) ───────────────────────────────────
     if (isLatest) {
         const soloQData = await getSoloQData(player.puuid);
         currentLP     = soloQData?.leaguePoints ?? 0;
@@ -96,7 +130,7 @@ async function processNewMatch(player, matchId, isLatest = false) {
             oldRank, oldLP, currentRank, currentLP, finalLpChange,
         });
     } else {
-        // ── LP estimés (matchs en retard) ────────────────────────────────────
+        // ── LP estimés (matchs en retard) ─────────────────────────────────────
         const ratingChange =
             typeof participant.challenges?.ratingChange === "number"
                 ? Math.round(participant.challenges.ratingChange)
@@ -106,6 +140,8 @@ async function processNewMatch(player, matchId, isLatest = false) {
         const rawLP = oldLP + estimatedChange;
 
         if ((rawLP >= 100 || rawLP < 0) && !isHighElo(oldRank)) {
+            // Promotion/rétrogradation probable → on garde les LP actuels
+            // les vrais LP seront mis à jour au prochain match (isLatest)
             currentLP     = oldLP;
             currentRank   = oldRank;
             finalLpChange = estimatedChange;
@@ -119,7 +155,7 @@ async function processNewMatch(player, matchId, isLatest = false) {
         }
     }
 
-    // ── Insertion BDD ────────────────────────────────────────────────────────
+    // ── Insertion BDD ─────────────────────────────────────────────────────────
     global.db.prepare(`
         INSERT INTO match_history (
             player_id, match_id, champion_id, champion_name,
@@ -141,7 +177,7 @@ async function processNewMatch(player, matchId, isLatest = false) {
 
     logger.info("MATCH", `Match ${matchId} stocké pour ${player.riot_id}`);
 
-    // ── Mise à jour joueur ───────────────────────────────────────────────────
+    // ── Mise à jour joueur ────────────────────────────────────────────────────
     global.db.prepare(`
         UPDATE players SET last_match_id = ?, last_lp = ?, last_rank = ?, last_update = ?
         WHERE id = ?
