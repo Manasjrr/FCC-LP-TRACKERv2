@@ -250,11 +250,11 @@ async function sendWeeklyRecap(client) {
 
             const discordGuild = client.guilds.cache.get(guild.guild_id);
             if (!discordGuild) {
-                console.log(`❌ Serveur Discord introuvable pour ${guild.guild_id}`);
+                console.log(`Serveur Discord introuvable pour ${guild.guild_id}`);
                 continue;
             }
 
-            console.log(`🔍 DEBUG serveur ${discordGuild.name} (${guild.guild_id})`);
+            console.log(` DEBUG serveur ${discordGuild.name} (${guild.guild_id})`);
 
             const channelUsage = global.db.prepare(`
                 SELECT channel_id, COUNT(*) as usage_count 

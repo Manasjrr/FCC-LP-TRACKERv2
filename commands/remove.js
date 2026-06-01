@@ -58,6 +58,9 @@ module.exports = {
         const targetRow = rows[numero - 1];
 
         try {
+            // Suppression des données liées avant le joueur (contraintes FK)
+            global.db.prepare(`DELETE FROM match_history WHERE player_id = ?`).run(targetRow.id);
+            global.db.prepare(`DELETE FROM user_links WHERE player_id = ?`).run(targetRow.id);
             global.db.prepare(`DELETE FROM players WHERE id = ?`).run(targetRow.id);
 
             logger.success('COMMAND', `Compte supprimé du monitoring : ${targetRow.riot_id}`, {
