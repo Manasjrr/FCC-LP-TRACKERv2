@@ -26,7 +26,7 @@ module.exports = {
 
         const userId = interaction.user.id;
         const member = interaction.member;
-        const isSpecialUser = userId === "414354252236849172";
+        const isSpecialUser = userId === process.env.OWNER_ID;
         const isAdmin = member.permissions.has(PermissionFlagsBits.Administrator);
 
         if (!isAdmin && !isSpecialUser) {
