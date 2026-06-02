@@ -1,6 +1,5 @@
 const { getRankOrder } = require("../utils/rankUtils");
 const { getMatch, getSoloQData, getTimeline } = require("./riotApiService");
-const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
 const logger = require("../utils/loggers");
 
