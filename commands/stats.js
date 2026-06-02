@@ -466,24 +466,19 @@ async function getChampionMastery(player) {
         return cached.data;
     }
 
-    const RIOT_API_KEY = process.env.RIOT_API_KEY;
-    const masteryData = {};
-
-    if (!player.puuid) return masteryData;
+    if (!player.puuid) return {};
 
     try {
-        const res = await axios.get(
-            `https://euw1.api.riotgames.com/lol/champion-mastery/v4/champion-masteries/by-puuid/${player.puuid}`,
-            { headers: { "X-Riot-Token": RIOT_API_KEY }, timeout: 10_000 }
-        );
+        const masteries = await getChampionMasteries(player.puuid);
+        const masteryData = {};
 
-        for (const m of res.data) {
+        for (const m of masteries) {
             masteryData[m.championId] = m.championPoints;
         }
 
         statsCache.set(cacheKey, { data: masteryData, timestamp: Date.now() });
         logger.info('API', `Maîtrise récupérée pour ${player.riot_id}`, {
-            championsCount: res.data.length
+            championsCount: masteries.length
         });
 
         return masteryData;
@@ -493,11 +488,13 @@ async function getChampionMastery(player) {
             status: error.response?.status,
             error: error.message
         });
+
         statsCache.set(cacheKey, {
-            data: masteryData,
+            data: {},
             timestamp: Date.now() - (MASTERY_CACHE_DURATION - 5 * 60_000),
         });
-        return masteryData;
+
+        return {};
     }
 }
 
