@@ -661,7 +661,7 @@ function getChampionIdByName(championName) {
         "Rumble": 68, "Ryze": 13,
         "Samira": 360, "Sejuani": 113, "Senna": 235, "Seraphine": 147, "Sett": 875,
         "Shaco": 35, "Shen": 98, "Shyvana": 102, "Singed": 27, "Sion": 14,
-        "Sivir": 15, "Skarner": 901, "Smolder": 893, "Sona": 37, "Soraka": 16,
+        "Sivir": 15, "Skarner": 901, "Smolder": 903, "Sona": 37, "Soraka": 16,
         "Swain": 50, "Sylas": 517, "Syndra": 134,
         "Tahm Kench": 223, "Taliyah": 163, "Talon": 91, "Taric": 44, "Teemo": 17,
         "Thresh": 412, "Tristana": 18, "Trundle": 48, "Tryndamere": 23,
