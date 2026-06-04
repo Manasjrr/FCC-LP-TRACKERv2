@@ -44,15 +44,13 @@ It automatically detects new matches, posts win/loss alerts in designated channe
 ```
 FCC-LP-TRACKERv2/ 
 │ 
-├── index.js          # Entry point — boot, events, cron 
-├── players.db        # SQLite database (auto-generated)
+├── index.js          # Entry point — initializes bot, events, cron jobs, monitoring loop
+├── players.db        # better-SQLite3 database (auto-generated)
 ├── .env              # Environment variables
 │
-├── core/
-│   ├── client.js     # Discord client setup
-│   ├── database.js   # DB init and schema
-│   ├── deploy.js     # Slash command deployment
-│   └── monitoring.js # Match polling, LP logic, notifications
+├── cache/
+│   ├── matchCache.js     # In-memory cache for match data (reduces API calls)
+│   ├── timelineCache.js  # Cache for match timelines (heavy API endpoint optimization)
 │
 ├── commands/
 │   ├── add.js        # Add a player to monitoring
@@ -62,10 +60,22 @@ FCC-LP-TRACKERv2/
 │   ├── link.js       # Link Discord to LoL account
 │   └── clear.js      # Delete messages (Admin/Owner only)
 │
+├── database/
+│   ├── initDB.js     # Database schema creation + indexes (players, matches, links)
+│
+├── embeds/
+│   ├── detailedStatsEmbed.js # Build advanced match stats embed (timeline + comparisons)
+│   ├── matchEmbed.js         # Build win/loss + LP change notification embeds
+│ 
 ├── handlers/
-│   ├── commandHandler.js  # Routes slash commands
-│   ├── buttonHandler.js   # Routes button interactions
-│   └── modalHandler.js    # Routes modal submissions
+│   ├── commandHandler.js      # Load + deploy slash commands dynamically
+│   ├── interactionHandler.js  # Central router for commands, buttons, and modals
+│
+│ 
+├── services/
+│   ├── matchService.js       # Core match processing (LP calc, DB insert, timeline cache)
+│   ├── monitoringService.js  # Main loop — detects new matches and sends notifications
+│   ├── riotApiService.js     # Riot API wrapper (retry, rate limit handling, endpoints)
 │
 └── utils/
     ├── rankUtils.js    # Rank emoji and ordering helpers
