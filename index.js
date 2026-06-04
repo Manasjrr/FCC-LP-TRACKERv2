@@ -5,16 +5,16 @@ const cron = require("node-cron");
 const logger = require("./utils/loggers");
 
 // ─── Services & Handlers ──────────────────────────────────────────────────────
-const { initDB }            = require("./database/initDB");
+const { initDB } = require("./database/initDB");
 const { loadCommands, deployCommands } = require("./handlers/commandHandler");
 const { handleInteraction } = require("./handlers/interactionHandler");
-const { checkAllPlayers }   = require("./services/monitoringService");
-const { checkApiStatus }    = require("./services/riotApiService");
-const { sendWeeklyRecap }   = require("./utils/weeklyRecap");
+const { checkAllPlayers } = require("./services/monitoringService");
+const { checkApiStatus } = require("./services/riotApiService");
+const { sendWeeklyRecap } = require("./utils/weeklyRecap");
 
 // ─── Vérification des variables d'environnement ───────────────────────────────
-const TOKEN      = process.env.DISCORD_TOKEN;
-const CLIENT_ID  = process.env.CLIENT_ID;
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
 
 if (!TOKEN || !CLIENT_ID || !process.env.RIOT_API_KEY) {
     logger.error("BOOT", "Variables d'environnement manquantes (DISCORD_TOKEN / CLIENT_ID / RIOT_API_KEY)");
@@ -59,7 +59,7 @@ client.once("ready", async () => {
         const ok = await checkApiStatus();
         if (!ok) {
             try {
-                const user = await client.users.fetch("414354252236849172");
+                const user = await client.users.fetch(process.env.OWNER_ID);
                 await user.send("**API RIOT DOWN** - La clé API ne fonctionne plus !");
                 logger.info("API", "MP d'alerte envoyé");
             } catch (err) {

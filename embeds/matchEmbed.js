@@ -54,8 +54,6 @@ function buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP) {
     const newRankData = getRankOrder(newRank, newLP);
     const rankUp = newRankData.totalScore > oldRankData.totalScore;
 
-    // Easter egg LeSaintRazmo
-
     return new EmbedBuilder()
         .setTitle(rankUp ? "📈 PROMOTION !" : "📉 RÉTROGRADATION")
         .setDescription(`**${player.riot_id}** a changé de rang !`)
