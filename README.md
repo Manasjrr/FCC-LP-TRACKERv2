@@ -152,6 +152,11 @@ OWNER_ID=
 
 ## 📄 License
 
-This project is for private use within the **FCC community**.  
+This project is open to everyone within the **FCC community** and beyond.  
 Maintained by **Manas**.  
-Discord : scotted
+
+💡 Got ideas or improvements? Don't hesitate to reach out!  
+Discord: **scotted**  
+
+Currently deployed on a limited number of servers, planning to expand  
+once the Riot production API key is approved.
