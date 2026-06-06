@@ -5,7 +5,7 @@ const cron = require("node-cron");
 const logger = require("./utils/loggers");
 
 // ─── Services & Handlers ──────────────────────────────────────────────────────
-const { initDB } = require("./database/initDB");
+const { initDB, runMigrations } = require("./database/initDB");
 const { loadCommands, deployCommands } = require("./handlers/commandHandler");
 const { handleInteraction } = require("./handlers/interactionHandler");
 const { checkAllPlayers } = require("./services/monitoringService");
@@ -25,6 +25,7 @@ if (!TOKEN || !CLIENT_ID || !process.env.RIOT_API_KEY) {
 const db = new Database("./players.db");
 global.db = db;
 initDB(db);
+runMigrations(db);
 
 // ─── Client Discord ───────────────────────────────────────────────────────────
 const client = new Client({

@@ -2,7 +2,6 @@ const { SlashCommandBuilder } = require("discord.js");
 const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
 const logger = require("../utils/loggers");
 
-// ─── Helper tri (identique à list.js en gros) ────────────────────────────────────────
 function sortPlayersByRank(players) {
     return players.sort((a, b) => {
         const rankA = getRankOrder(a.last_rank, a.last_lp);
@@ -37,7 +36,7 @@ module.exports = {
             guild: guildId
         });
 
-        // ── PAS DE NUMÉRO --> AFFICHER COMPTE LIÉ ─────────────────────────────
+        // ── PAS DE NUMÉRO → AFFICHER COMPTE LIÉ ──────────────────────────────
         if (!numero) {
             const linkedPlayer = global.db.prepare(`
                 SELECT p.* FROM user_links ul
@@ -46,16 +45,10 @@ module.exports = {
             `).get(userId, guildId);
 
             if (!linkedPlayer) {
-                logger.info('COMMAND', `Aucun compte lié pour ${interaction.user.tag}`, { guild: guildId });
                 return interaction.editReply(
                     "❌ **Aucun compte lié**\n\n*Utilisez `/link numero:X` pour vous lier à un compte*"
                 );
             }
-
-            logger.info('COMMAND', `Consultation liaison pour ${interaction.user.tag}`, {
-                linkedTo: linkedPlayer.riot_id,
-                guild: guildId
-            });
 
             const rankEmoji = getRankEmoji(linkedPlayer.last_rank);
             return interaction.editReply(
@@ -65,22 +58,21 @@ module.exports = {
             );
         }
 
-        // ── NUMÉRO --> CRÉER LIAISON ────────────────────────────────────────────
-        const players = global.db.prepare(`SELECT * FROM players WHERE guild_id = ?`).all(guildId);
+        // ── NUMÉRO → CRÉER LIAISON ────────────────────────────────────────────
+        // Récupérer les joueurs actifs sur CE serveur via player_guilds
+        const players = global.db.prepare(`
+            SELECT p.* FROM players p
+            JOIN player_guilds pg ON pg.player_id = p.id
+            WHERE pg.guild_id = ? AND pg.active = 1
+        `).all(guildId);
 
         if (!players?.length) {
-            logger.warn('COMMAND', `Aucun compte disponible pour /link`, { guild: guildId });
             return interaction.editReply("❌ Aucun compte disponible sur ce serveur");
         }
 
         sortPlayersByRank(players);
 
         if (numero > players.length) {
-            logger.warn('COMMAND', `Numéro invalide dans /link`, {
-                numero,
-                max: players.length,
-                user: interaction.user.tag
-            });
             return interaction.editReply(
                 `❌ Numéro invalide ! Utilisez un numéro entre **1** et **${players.length}**`
             );
@@ -94,17 +86,11 @@ module.exports = {
         ).get(targetPlayer.id, guildId);
 
         if (existingLink && existingLink.user_id !== userId) {
-            logger.warn('COMMAND', `Tentative de liaison sur compte déjà lié`, {
-                user: interaction.user.tag,
-                targetPlayer: targetPlayer.riot_id,
-                guild: guildId
-            });
             return interaction.editReply("❌ Ce compte est déjà lié à un autre utilisateur !");
         }
 
         // ── Insertion BDD ─────────────────────────────────────────────────────
         try {
-            // Transaction atomique : suppression ancienne liaison + création nouvelle
             global.db.transaction(() => {
                 global.db.prepare(`DELETE FROM user_links WHERE user_id = ? AND guild_id = ?`).run(userId, guildId);
                 global.db.prepare(`INSERT OR REPLACE INTO user_links (user_id, guild_id, player_id) VALUES (?, ?, ?)`).run(userId, guildId, targetPlayer.id);
@@ -113,7 +99,6 @@ module.exports = {
             logger.success('COMMAND', `Liaison créée : ${interaction.user.tag} → ${targetPlayer.riot_id}`, {
                 userId,
                 playerId: targetPlayer.id,
-                riotId: targetPlayer.riot_id,
                 guild: guildId
             });
 
@@ -125,11 +110,7 @@ module.exports = {
             );
 
         } catch (err) {
-            logger.error('DB', `Erreur liaison /link pour ${interaction.user.tag}`, {
-                error: err.message,
-                targetPlayer: targetPlayer.riot_id,
-                guild: guildId
-            });
+            logger.error('DB', `Erreur liaison /link`, { error: err.message, guild: guildId });
             return interaction.editReply("❌ Erreur lors de la liaison du compte");
         }
     },

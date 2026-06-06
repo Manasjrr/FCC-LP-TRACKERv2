@@ -29,7 +29,13 @@ module.exports = {
             return interaction.editReply("❌ Base de données non disponible");
         }
 
-        const rows = global.db.prepare(`SELECT * FROM players WHERE guild_id = ?`).all(interaction.guildId);
+        // ── Récupérer les joueurs actifs sur CE serveur ───────────────────────
+        const rows = global.db.prepare(`
+            SELECT p.*, pg.id as pg_id, pg.user_id as added_by
+            FROM players p
+            JOIN player_guilds pg ON pg.player_id = p.id
+            WHERE pg.guild_id = ? AND pg.active = 1
+        `).all(interaction.guildId);
 
         if (!rows || rows.length === 0) {
             logger.info('COMMAND', `Aucun compte à supprimer`, { guild: interaction.guildId });
@@ -58,33 +64,38 @@ module.exports = {
         const targetRow = rows[numero - 1];
 
         try {
-            // Suppression des données liées avant le joueur (contraintes FK)
-            global.db.prepare(`DELETE FROM match_history WHERE player_id = ?`).run(targetRow.id);
-            global.db.prepare(`DELETE FROM user_links WHERE player_id = ?`).run(targetRow.id);
-            global.db.prepare(`DELETE FROM players WHERE id = ?`).run(targetRow.id);
+            // ── Désactivation dans player_guilds UNIQUEMENT ───────────────────
+            // L'historique et le joueur global sont conservés
+            global.db.prepare(`
+                UPDATE player_guilds SET active = 0 WHERE id = ?
+            `).run(targetRow.pg_id);
 
-            logger.success('COMMAND', `Compte supprimé du monitoring : ${targetRow.riot_id}`, {
+            logger.success('COMMAND', `Compte retiré du monitoring : ${targetRow.riot_id}`, {
                 riotId: targetRow.riot_id,
                 playerId: targetRow.id,
+                pgId: targetRow.pg_id,
                 removedBy: interaction.user.tag,
                 guild: interaction.guildId
             });
 
             let embed;
             try {
-                const user = await interaction.client.users.fetch(targetRow.user_id);
+                const user = await interaction.client.users.fetch(targetRow.added_by);
                 embed = new EmbedBuilder()
-                    .setTitle("🗑️ Compte supprimé")
-                    .setDescription(`**${targetRow.riot_id}** (ajouté par ${user.username}) n'est plus surveillé.`)
+                    .setTitle("🗑️ Compte retiré du monitoring")
+                    .setDescription(
+                        `**${targetRow.riot_id}** (ajouté par ${user.username}) n'est plus surveillé sur ce serveur.\n` +
+                        `*L'historique des parties est conservé.*`
+                    )
                     .setColor(0xff9900)
                     .setTimestamp();
             } catch {
-                logger.warn('COMMAND', `Impossible de fetch l'utilisateur lié à ${targetRow.riot_id}`, {
-                    userId: targetRow.user_id
-                });
                 embed = new EmbedBuilder()
-                    .setTitle("🗑️ Compte supprimé")
-                    .setDescription(`**${targetRow.riot_id}** n'est plus surveillé.`)
+                    .setTitle("🗑️ Compte retiré du monitoring")
+                    .setDescription(
+                        `**${targetRow.riot_id}** n'est plus surveillé sur ce serveur.\n` +
+                        `*L'historique des parties est conservé.*`
+                    )
                     .setColor(0xff9900)
                     .setTimestamp();
             }
@@ -92,7 +103,7 @@ module.exports = {
             await interaction.editReply({ embeds: [embed] });
 
         } catch (err) {
-            logger.error('DB', `Erreur suppression dans /remove : ${targetRow.riot_id}`, {
+            logger.error('DB', `Erreur /remove : ${targetRow.riot_id}`, {
                 error: err.message,
                 playerId: targetRow.id,
                 guild: interaction.guildId

@@ -151,9 +151,11 @@ module.exports = {
 //  RÉCUPÉRATION DES JOUEURS (DB)
 // ─────────────────────────────────────────
 function getPlayerByRank(position, guildId) {
-    const rows = global.db
-        .prepare(`SELECT * FROM players WHERE guild_id = ?`)
-        .all(guildId);
+    const rows = global.db.prepare(`
+        SELECT p.* FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.guild_id = ? AND pg.active = 1
+    `).all(guildId);
 
     if (!rows?.length) return null;
 
@@ -169,19 +171,20 @@ function getPlayerByRank(position, guildId) {
 }
 
 function getLinkedPlayer(userId, guildId) {
-    return global.db
-        .prepare(`
-            SELECT p.* FROM players p
-            JOIN user_links ul ON p.id = ul.player_id
-            WHERE ul.user_id = ? AND ul.guild_id = ?
-        `)
-        .get(userId, guildId) ?? null;
+    return global.db.prepare(`
+        SELECT p.* FROM players p
+        JOIN user_links ul ON p.id = ul.player_id
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE ul.user_id = ? AND ul.guild_id = ? AND pg.guild_id = ? AND pg.active = 1
+    `).get(userId, guildId, guildId) ?? null;
 }
 
 function getServerPosition(targetRiotId, guildId) {
-    const rows = global.db
-        .prepare(`SELECT riot_id, last_rank, last_lp FROM players WHERE guild_id = ?`)
-        .all(guildId);
+    const rows = global.db.prepare(`
+        SELECT p.riot_id, p.last_rank, p.last_lp FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.guild_id = ? AND pg.active = 1
+    `).all(guildId);
 
     if (!rows?.length) return { position: 0, total: 0, percentile: 0 };
 

@@ -12,7 +12,12 @@ module.exports = {
 
         logger.info('COMMAND', `/list exécuté par ${interaction.user.tag}`, { guild: interaction.guildId });
 
-        const rows = global.db.prepare(`SELECT * FROM players WHERE guild_id = ?`).all(interaction.guildId);
+        // ── Joueurs actifs sur CE serveur uniquement ───────────────────────────
+        const rows = global.db.prepare(`
+            SELECT p.* FROM players p
+            JOIN player_guilds pg ON pg.player_id = p.id
+            WHERE pg.guild_id = ? AND pg.active = 1
+        `).all(interaction.guildId);
 
         if (!rows || rows.length === 0) {
             logger.info('COMMAND', `Aucun compte surveillé sur le serveur`, { guild: interaction.guildId });

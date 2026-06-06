@@ -26,11 +26,13 @@ async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP
 }
 
 // ─── Vérification d'un joueur ─────────────────────────────────────────────────
-async function checkPlayerNewMatches(player, client) {
+async function checkPlayerNewMatches(player, guildEntries, client) {
+    // player = ligne de la table players (global, unique par puuid)
+    // guildEntries = liste des player_guilds actifs pour ce joueur
+
     const matchIds = await getRecentMatchIds(player.puuid, 5);
     if (!matchIds?.length) return;
 
-    // Nouveaux matchs depuis le dernier connu
     const newMatchIds = [];
     for (const matchId of matchIds) {
         if (matchId === player.last_match_id) break;
@@ -39,7 +41,7 @@ async function checkPlayerNewMatches(player, client) {
 
     if (!newMatchIds.length) return;
 
-    newMatchIds.reverse(); // du plus ancien au plus récent
+    newMatchIds.reverse();
 
     logger.info("MONITOR", `${newMatchIds.length} nouveau(x) match(s) pour ${player.riot_id}`, {
         matches: newMatchIds,
@@ -56,40 +58,42 @@ async function checkPlayerNewMatches(player, client) {
 
         if (!result?.isRecent) continue;
 
-        // Cache + notification
         matchCache.setMatch(matchId, result.match.info);
-        fetchAndCacheTimeline(matchId).catch(() => { });
+        fetchAndCacheTimeline(matchId).catch(() => {});
 
-        const channel = await client.channels.fetch(player.channel_id).catch(() => null);
-        if (!channel) {
-            logger.warn("MONITOR", `Channel introuvable pour ${player.riot_id}`, {
-                channelId: player.channel_id,
-            });
-            continue;
-        }
+        // ── Notifier sur TOUS les serveurs où le joueur est actif ────────────
+        for (const guildEntry of guildEntries) {
+            const channel = await client.channels.fetch(guildEntry.channel_id).catch(() => null);
+            if (!channel) {
+                logger.warn("MONITOR", `Channel introuvable pour ${player.riot_id}`, {
+                    channelId: guildEntry.channel_id,
+                    guild: guildEntry.guild_id,
+                });
+                continue;
+            }
 
-        const { embed, row } = buildMatchNotifEmbed(
-            currentPlayer,
-            result.participant,
-            result.match.info,
-            result.currentRank,
-            result.currentLP,
-            result.finalLpChange,
-            matchId
-        );
-
-        await channel.send({ embeds: [embed], components: [row] });
-
-
-        if (result.oldRank && result.oldRank !== result.currentRank) {
-            await sendRankChangeNotification(
+            const { embed, row } = buildMatchNotifEmbed(
                 currentPlayer,
-                result.oldRank,
+                result.participant,
+                result.match.info,
                 result.currentRank,
-                currentPlayer.last_lp,
                 result.currentLP,
-                channel
+                result.finalLpChange,
+                matchId
             );
+
+            await channel.send({ embeds: [embed], components: [row] });
+
+            if (result.oldRank && result.oldRank !== result.currentRank) {
+                await sendRankChangeNotification(
+                    currentPlayer,
+                    result.oldRank,
+                    result.currentRank,
+                    currentPlayer.last_lp,
+                    result.currentLP,
+                    channel
+                );
+            }
         }
     }
 }
@@ -100,8 +104,16 @@ async function checkAllPlayers(client) {
         timestamp: new Date().toISOString(),
     });
 
-    const rows = global.db.prepare(`SELECT * FROM players`).all();
-    if (!rows?.length) {
+    // ── Récupérer tous les joueurs avec au moins un serveur actif ────────────
+    // Dédupliqués par puuid → 1 seul appel API par joueur
+    const players = global.db.prepare(`
+        SELECT DISTINCT p.*
+        FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.active = 1
+    `).all();
+
+    if (!players?.length) {
         logger.info("MONITOR", `Aucun joueur à surveiller`);
         return;
     }
@@ -109,9 +121,15 @@ async function checkAllPlayers(client) {
     let success = 0;
     let errors = 0;
 
-    for (const player of rows) {
+    for (const player of players) {
         try {
-            await checkPlayerNewMatches(player, client);
+            // Récupérer tous les serveurs actifs pour ce joueur
+            const guildEntries = global.db.prepare(`
+                SELECT * FROM player_guilds
+                WHERE player_id = ? AND active = 1
+            `).all(player.id);
+
+            await checkPlayerNewMatches(player, guildEntries, client);
             success++;
         } catch (error) {
             errors++;
@@ -124,7 +142,7 @@ async function checkAllPlayers(client) {
     }
 
     logger.info("MONITOR", `Vérification terminée`, {
-        total: rows.length,
+        total: players.length,
         success,
         errors,
     });
