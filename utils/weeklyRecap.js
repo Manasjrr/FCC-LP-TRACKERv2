@@ -76,7 +76,11 @@ function calculateNetLP(startRank, startLP, endRank, endLP) {
 
 // ─── Génération récap d'un serveur ────────────────────────────────────────────
 async function generateRecapForGuild(guildId, weekStart, weekEnd) {
-    const players = global.db.prepare(`SELECT * FROM players WHERE guild_id = ?`).all(guildId);
+    const players = global.db.prepare(`
+        SELECT DISTINCT p.* FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.guild_id = ? AND pg.active = 1
+    `).all(guildId);
 
     if (!players?.length) {
         logger.info('RECAP', `Pas de joueurs sur le serveur ${guildId}`);
@@ -172,6 +176,11 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
         description += `└─ ⚔️ **KDA moyen :** ${Number(player.avg_kills).toFixed(1)}/${Number(player.avg_deaths).toFixed(1)}/${Number(player.avg_assists).toFixed(1)}\n\n`;
     });
 
+    //  Vérification longueur description (limite Discord : 4096 caractères)
+    if (description.length > 3900) {
+        description = description.substring(0, 3900) + '\n*... (trop de joueurs pour afficher tout)*\n\n';
+    }
+
     const totalGames = playerStats.reduce((s, p) => s + p.total_games, 0);
     const totalWins = playerStats.reduce((s, p) => s + p.wins, 0);
     const totalLP = playerStats.reduce((s, p) => s + p.total_lp_change, 0);
@@ -203,7 +212,9 @@ async function sendWeeklyRecap(client) {
 
     logger.info('RECAP', `Période analysée : ${weekStart.toLocaleDateString('fr-FR')} → ${weekEnd.toLocaleDateString('fr-FR')}`);
 
-    const guilds = global.db.prepare(`SELECT DISTINCT guild_id FROM players`).all();
+    const guilds = global.db.prepare(`
+        SELECT DISTINCT guild_id FROM player_guilds WHERE active = 1
+    `).all();
 
     if (!guilds?.length) {
         logger.warn('RECAP', 'Aucun serveur trouvé');
@@ -228,11 +239,11 @@ async function sendWeeklyRecap(client) {
                 continue;
             }
 
-            // Cherche le canal le plus utilisé pour le monitoring
+            
             const channelUsage = global.db.prepare(`
                 SELECT channel_id, COUNT(*) AS usage_count
-                FROM players
-                WHERE guild_id = ? AND channel_id IS NOT NULL
+                FROM player_guilds
+                WHERE guild_id = ? AND active = 1 AND channel_id IS NOT NULL
                 GROUP BY channel_id
                 ORDER BY usage_count DESC
             `).all(guild_id);
@@ -241,7 +252,7 @@ async function sendWeeklyRecap(client) {
 
             for (const { channel_id } of channelUsage) {
                 const ch = discordGuild.channels.cache.get(channel_id);
-                if (ch?.permissionsFor(discordGuild.members.me).has(['SendMessages', 'EmbedLinks'])) {
+                if (ch?.permissionsFor(discordGuild.members.me)?.has(['SendMessages', 'EmbedLinks'])) {
                     targetChannel = ch;
                     break;
                 }
@@ -253,10 +264,10 @@ async function sendWeeklyRecap(client) {
                 targetChannel = discordGuild.channels.cache.find(ch =>
                     ch.type === 0
                     && fallbackNames.includes(ch.name.toLowerCase())
-                    && ch.permissionsFor(discordGuild.members.me).has(['SendMessages', 'EmbedLinks'])
+                    && ch.permissionsFor(discordGuild.members.me)?.has(['SendMessages', 'EmbedLinks'])
                 ) ?? discordGuild.channels.cache.find(ch =>
                     ch.type === 0
-                    && ch.permissionsFor(discordGuild.members.me).has(['SendMessages', 'EmbedLinks'])
+                    && ch.permissionsFor(discordGuild.members.me)?.has(['SendMessages', 'EmbedLinks'])
                 ) ?? null;
             }
 
