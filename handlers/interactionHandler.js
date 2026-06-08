@@ -40,27 +40,27 @@ async function handleButton(interaction) {
     try {
         const { customId } = interaction;
 
-        // 📈 Graphique LP
+        // Graphique LP
         if (customId.startsWith("lp_chart_")) {
             return handleLPChart(interaction);
         }
 
-        // 📜 Historique matchs
+        // Historique matchs
         if (customId.startsWith("match_history_")) {
             return handleMatchHistoryButton(interaction);
         }
 
-        // 📊 Stats détaillées
+        // Stats détaillées
         if (customId.startsWith("stats|")) {
             return handleDetailedStats(interaction);
         }
 
-        // 📢 Partager stats
+        // Partager stats
         if (customId.startsWith("share|")) {
             return handleShare(interaction);
         }
 
-        // 🔄 Refresh
+        // Refresh
         if (customId === "refresh_stats") {
             await interaction.deferReply({ flags: 64 });
             return interaction.followUp({
@@ -69,7 +69,7 @@ async function handleButton(interaction) {
             });
         }
 
-        // ⚖️ Comparer
+        // Comparer
         if (customId === "compare_rank") {
             await interaction.deferReply({ flags: 64 });
             return interaction.followUp({
@@ -78,7 +78,7 @@ async function handleButton(interaction) {
             });
         }
 
-        // ❓ Inconnu
+        // Inconnu
         await interaction.deferReply({ flags: 64 });
         return interaction.followUp({
             content: `❓ Bouton non reconnu : ${customId}`,
@@ -155,6 +155,13 @@ async function handleDetailedStats(interaction) {
     const parts = interaction.customId.split("|");
     const matchId = parts[1];
     const puuid = parts[2];
+
+    // Log du clic
+    logger.info("HANDLER", `Bouton stats détaillées cliqué par ${interaction.user.tag}`, {
+        matchId,
+        guild: interaction.guildId,
+        channel: interaction.channelId,
+    });
 
     let matchInfo = matchCache.getMatch(matchId);
 
