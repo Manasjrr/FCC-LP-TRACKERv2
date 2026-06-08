@@ -58,6 +58,7 @@ FCC-LP-TRACKERv2/
 │   ├── list.js       # List all monitored players
 │   ├── stats.js      # Detailed stats for a player
 │   ├── link.js       # Link Discord to LoL account
+│   ├── ingame.js       # Show current player in games
 │   └── clear.js      # Delete messages (Admin/Owner only)
 │
 ├── database/
@@ -143,6 +144,7 @@ OWNER_ID=
 | `/list` | Display all accounts currently being monitored, sorted by rank |
 | `/stats` | Show detailed ranked stats for a tracked player (by rank or linked account) |
 | `/link` | Link your Discord account to your League of Legends account |
+| `/ingame` | Show all currently monitored players currently in-game |
 | `/clear` | Delete messages in a channel *(Admin and Owner only)* |
 
 ---
