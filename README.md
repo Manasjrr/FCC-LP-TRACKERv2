@@ -60,6 +60,7 @@ FCC-LP-TRACKERv2/
 │   ├── link.js       # Link Discord to LoL account
 │   ├── ingame.js       # Show current player in games
 │   └── clear.js      # Delete messages (Admin/Owner only)
+│   └── help.js      # Show the commands documentation
 │
 ├── database/
 │   ├── initDB.js     # Database schema creation + indexes (players, matches, links)
