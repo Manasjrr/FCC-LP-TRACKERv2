@@ -81,42 +81,46 @@ const ADC_ONLY_CHAMPIONS = new Set([
  * Fiabilité estimée :
  *  - JUNGLE  → 100% (smite exclusif)
  *  - SUPPORT → ~85% (exhaust/barrier très liés au support)
- *  - ADC  → ~80% (heal + champion ADC connu)
+ *  - ADC     → ~80% (heal + champion ADC connu)
  *  - TOP     → ~65% (téléport + pas heal + pas smite)
- *  - MID  → ~55% (ignite sans heal, par élimination)
- *  - NONE    → cas bzr restants
+ *  - MID     → ~55% (ignite sans heal, par élimination)
+ *  - NONE    → cas bizarres restants
  */
 function getRoleFromSpells(spell1Id, spell2Id, championId) {
     const spells = [spell1Id, spell2Id];
 
-    // ── Jungle ────────────────────────────────────────────────
+    // ── Jungle ────────────────────────────────────────────────────────────────
+    // Smite est exclusif au jungle, aucune ambiguïté possible
     if (spells.includes(SMITE)) return "JUNGLE";
 
-    // ── Support (exhaust ou barrier) ───────────
+    // ── Champion ADC connu → priorité absolue avant toute détection par spell ─
+    // Jhin/Caitlyn/Jinx avec Exhaust ou Barrier jouent ADC, pas Support
+    // On vérifie le champion EN PREMIER pour éviter les faux positifs
+    if (championId && ADC_ONLY_CHAMPIONS.has(championId)) return "ADC";
+
+    // ── Support (exhaust ou barrier) ──────────────────────────────────────────
+    // On arrive ici uniquement si le champion n'est PAS un ADC identifié
     if (spells.includes(EXHAUST) || spells.includes(BARRIER)) return "SUPPORT";
 
-    // ── ADC / Support avec Heal ────────────────────────────────────────────
+    // ── ADC / Support avec Heal ───────────────────────────────────────────────
     if (spells.includes(HEAL)) {
         // Champion identifié comme support → SUPPORT
         if (championId && SUPPORT_ONLY_CHAMPIONS.has(championId)) return "SUPPORT";
-        // Champion identifié comme ADC → ADC
-        if (championId && ADC_ONLY_CHAMPIONS.has(championId)) return "ADC";
         // Heal sans info champion précise → probablement ADC
         return "ADC";
     }
 
     // ── Téléport → Top dans la grande majorité des cas ───────────────────────
-    // (Mid prend rarement TP en ranked, encore moins avec Ignite)
     if (spells.includes(TELEPORT)) {
-        // TP + Ignite → Mid possible, mais Top reste majoritaire
-        if (spells.includes(IGNITE)) return "TOP";
+        // TP + Ignite → Mid possible (Twisted Fate, Corki...) mais Top reste majoritaire
+        if (spells.includes(IGNITE)) return "MID";
         return "TOP";
     }
 
     // ── Ignite sans Heal/Exhaust/TP → Mid ou Top ─────────────────────────────
     // Flash + Ignite est commun Mid. Ghost + Ignite aussi.
     if (spells.includes(IGNITE)) {
-        // Support avec ignite possible mais rare → on préfère MID
+        // Support avec ignite possible mais rare → on préfère SUPPORT quand même
         if (championId && SUPPORT_ONLY_CHAMPIONS.has(championId)) return "SUPPORT";
         return "MID";
     }
@@ -124,9 +128,15 @@ function getRoleFromSpells(spell1Id, spell2Id, championId) {
     // ── Ghost → souvent Top (Darius, Garen, Mordekaiser…) ────────────────────
     if (spells.includes(GHOST)) return "TOP";
 
-    // ── Cleanse → ADC ou Mid, on ne peut pas trancher ────────────────────────
+    // ── Cleanse → souvent ADC (Vayne, Jinx...) ou Mid en cas de CC lourd ─────
+    if (spells.includes(CLEANSE)) {
+        if (championId && ADC_ONLY_CHAMPIONS.has(championId)) return "ADC";
+        return "MID";
+    }
+
     return "NONE";
 }
+
 
 // ─── Formatage durée ──────────────────────────────────────────────────────────
 function formatDuration(seconds) {
@@ -139,10 +149,20 @@ function formatDuration(seconds) {
 const ingameCache = new Map();
 const INGAME_CACHE_TTL = 30_000; // 30 secondes
 
+// Nettoyage périodique du cache pour éviter les fuites mémoire
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, val] of ingameCache.entries()) {
+        if (now - val.timestamp > INGAME_CACHE_TTL * 2) {
+            ingameCache.delete(key);
+        }
+    }
+}, 5 * 60 * 1000);
+
 async function getActiveGameCached(puuid) {
     const cached = ingameCache.get(puuid);
     if (cached && Date.now() - cached.timestamp < INGAME_CACHE_TTL) {
-        logger.debug("INGAME", `Cache hit pour ${puuid.substring(0, 8)}...`);
+        //logger.debug("INGAME", `Cache hit pour ${puuid.substring(0, 8)}...`);
         return cached.data;
     }
     const data = await getActiveGame(puuid);
@@ -158,6 +178,41 @@ function withTimeout(promise, ms, label) {
             setTimeout(() => reject(new Error(`Timeout (${ms}ms) pour ${label}`)), ms)
         ),
     ]);
+}
+
+// ─── Stats récentes + série depuis la BDD (1 seule requête) ──────────────────
+function getPlayerRecentStats(playerId) {
+    const matches = global.db.prepare(`
+        SELECT win FROM match_history
+        WHERE player_id = ?
+        ORDER BY game_creation DESC
+        LIMIT 20
+    `).all(playerId);
+
+    if (!matches.length) return { wrLine: null, streakLine: null };
+
+    // ── Winrate ───────────────────────────────────────────────────────────────
+    const total = matches.length;
+    const wins = matches.filter((m) => m.win).length;
+    const wrLine = `📊 **${Math.round((wins / total) * 100)}%** WR · ${wins}W ${total - wins}L`;
+
+    // ── Série en cours ────────────────────────────────────────────────────────
+    let streakLine = null;
+    if (matches.length >= 2) {
+        const first = matches[0].win;
+        let count = 0;
+        for (const m of matches) {
+            if (Boolean(m.win) === Boolean(first)) count++;
+            else break;
+        }
+        if (count >= 2) {
+            streakLine = first
+                ? `🔥 **${count} victoires** consécutives`
+                : `💀 **${count} défaites** consécutives`;
+        }
+    }
+
+    return { wrLine, streakLine };
 }
 
 // ─── Commande ─────────────────────────────────────────────────────────────────
@@ -199,9 +254,9 @@ module.exports = {
         const results = [];
 
         for (const player of players) {
-            logger.debug("INGAME", `Vérification de ${player.riot_id}`, {
-                puuid: player.puuid?.substring(0, 8) + "...",
-            });
+            // logger.debug("INGAME", `Vérification de ${player.riot_id}`, {
+            //     puuid: player.puuid?.substring(0, 8) + "...",
+            // });
 
             try {
                 const gameData = await withTimeout(
@@ -210,13 +265,13 @@ module.exports = {
                     player.riot_id
                 );
 
-                logger.debug("INGAME", `Résultat pour ${player.riot_id}`, {
-                    inGame: gameData !== null,
-                    queueId: gameData?.gameQueueConfigId ?? "N/A",
-                    gameId: gameData?.gameId ?? "N/A",
-                    gameLength: gameData?.gameLength ?? "N/A",
-                    participantsCount: gameData?.participants?.length ?? 0,
-                });
+                // logger.debug("INGAME", `Résultat pour ${player.riot_id}`, {
+                //     inGame: gameData !== null,
+                //     queueId: gameData?.gameQueueConfigId ?? "N/A",
+                //     gameId: gameData?.gameId ?? "N/A",
+                //     gameLength: gameData?.gameLength ?? "N/A",
+                //     participantsCount: gameData?.participants?.length ?? 0,
+                // });
 
                 results.push({ status: "fulfilled", value: { player, gameData } });
             } catch (err) {
@@ -234,11 +289,12 @@ module.exports = {
         // ── Diagnostic avant filtre ───────────────────────────────────────────
         const fulfilled = results.filter((r) => r.status === "fulfilled");
         const withGame = fulfilled.filter((r) => r.value.gameData !== null);
+        const rejected = results.filter((r) => r.status === "rejected");
 
         logger.info("INGAME", `Résultats bruts`, {
             total: results.length,
             fulfilled: fulfilled.length,
-            rejected: results.filter((r) => r.status === "rejected").length,
+            rejected: rejected.length,
             withActiveGame: withGame.length,
             queueIds: withGame.map((r) => ({
                 player: r.value.player.riot_id,
@@ -258,20 +314,21 @@ module.exports = {
         if (!inGame.length) {
             const embed = new EmbedBuilder()
                 .setTitle("🎮 Joueurs en partie")
-                .setDescription(
-                    "😴 Aucun joueur surveillé n'est actuellement en SoloQ ou Flex."
-                )
+                .setDescription("😴 Aucun joueur surveillé n'est actuellement en SoloQ ou Flex.")
                 .setColor(0x808080)
                 .setTimestamp()
-                .setFooter({ text: `${players.length} joueur(s) vérifié(s)` });
+                .setFooter({
+                    text: `${players.length} joueur(s) vérifié(s)${rejected.length > 0 ? ` · ⚠️ ${rejected.length} erreur(s) API` : ""}`,
+                });
 
             return interaction.editReply({ content: null, embeds: [embed] });
         }
 
-        // ── Construction de l'embed ───────────────────────────────────────────
+        // ── Construction des fields ───────────────────────────────────────────
         const fields = [];
 
-        for (const { player, gameData } of inGame) {
+        for (let i = 0; i < inGame.length; i++) {
+            const { player, gameData } = inGame[i];
             const participant = gameData.participants?.find(
                 (p) => p.puuid === player.puuid
             );
@@ -287,71 +344,31 @@ module.exports = {
                 continue;
             }
 
-            logger.debug("INGAME", `Spells de ${player.riot_id}`, {
-                spell1Id: participant.spell1Id,
-                spell2Id: participant.spell2Id,
-                championId: participant.championId,
-            });
+            // logger.debug("INGAME", `Spells de ${player.riot_id}`, {
+            //     spell1Id: participant.spell1Id,
+            //     spell2Id: participant.spell2Id,
+            //     championId: participant.championId,
+            // });
 
             const role = getRoleFromSpells(participant.spell1Id, participant.spell2Id, participant.championId);
             const roleEmoji = ROLE_EMOJIS[role] ?? ROLE_EMOJIS["NONE"];
             const roleLabel = role !== "NONE" ? role : "Inconnu";
             const queueName = QUEUE_NAMES[gameData.gameQueueConfigId] ?? `Queue ${gameData.gameQueueConfigId}`;
+            const championName = getChampionName(participant.championId);
+            const rankEmoji = getRankEmoji(player.last_rank);
 
-            // ✅ FIX : gameLength peut être 0 au tout début de la partie
             const rawSeconds = Math.max(0, Math.floor(gameData.gameLength ?? 0));
             const durationLabel = rawSeconds < 60
                 ? "🔜 En chargement..."
                 : `⏱️ ${formatDuration(rawSeconds)}`;
 
-            const rankEmoji = getRankEmoji(player.last_rank);
             const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
             const dpmUrl = `https://dpm.lol/${riotIdFormatted}`;
-            const championName = getChampionName(participant.championId);
 
-            // ── Stats récentes depuis la BDD ──────────────────────────────────
-            const recentStats = global.db.prepare(`
-        SELECT
-            COUNT(*) AS total,
-            SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END) AS wins
-        FROM (
-            SELECT win FROM match_history
-            WHERE player_id = ?
-            ORDER BY game_creation DESC
-            LIMIT 20
-        )
-    `).get(player.id);
-
-            const wrLine = recentStats?.total > 0
-                ? `📊 **${Math.round((recentStats.wins / recentStats.total) * 100)}%** WR · ${recentStats.wins}W ${recentStats.total - recentStats.wins}L`
-                : null;
-
-            // ── Série en cours ────────────────────────────────────────────────
-            const recentMatches = global.db.prepare(`
-        SELECT win FROM match_history
-        WHERE player_id = ?
-        ORDER BY game_creation DESC
-        LIMIT 10
-    `).all(player.id);
-
-            let streakLine = null;
-            if (recentMatches.length >= 2) {
-                const first = recentMatches[0].win;
-                let count = 0;
-                for (const m of recentMatches) {
-                    if (Boolean(m.win) === Boolean(first)) count++;
-                    else break;
-                }
-                if (count >= 2) {
-                    streakLine = first
-                        ? `🔥 **${count} victoires** consécutives`
-                        : `💀 **${count} défaites** consécutives`;
-                }
-            }
+            const { wrLine, streakLine } = getPlayerRecentStats(player.id);
 
             // ── Assemblage du field ───────────────────────────────────────────
             const lines = [
-                // Lien cliquable en première ligne de value
                 `🔗 [Voir sur DPM](${dpmUrl})`,
                 `${rankEmoji} **${player.last_rank ?? "Non classé"}** (${player.last_lp ?? 0} LP)`,
                 `${roleEmoji} **${roleLabel}** · 🏆 **${championName}**`,
@@ -363,8 +380,17 @@ module.exports = {
             fields.push({
                 name: `🔴 ${player.riot_id}`,
                 value: lines.join("\n"),
-                inline: true,
+                inline: false,
             });
+
+            // ── Séparateur visuel entre chaque joueur (sauf le dernier) ──────
+            if (i < inGame.length - 1) {
+                fields.push({
+                    name: "─────────────────────",
+                    value: "\u200b",
+                    inline: false,
+                });
+            }
 
             logger.success("INGAME", `${player.riot_id} affiché en game`, {
                 queue: queueName,
@@ -376,13 +402,8 @@ module.exports = {
             });
         }
 
-        const remainder = fields.length % 3;
-        if (remainder !== 0) {
-            const blanksNeeded = 3 - remainder;
-            for (let i = 0; i < blanksNeeded; i++) {
-                fields.push({ name: "\u200b", value: "\u200b", inline: true });
-            }
-        }
+
+        // ── Padding supprimé — inutile sans inline ────────────────────────────
 
         const embed = new EmbedBuilder()
             .setTitle("🎮 Joueurs actuellement en partie")
@@ -390,11 +411,10 @@ module.exports = {
             .addFields(fields)
             .setTimestamp()
             .setFooter({
-                text: `${inGame.length}/${players.length} joueur(s) en game`,
+                text: `${inGame.length}/${players.length} joueur(s) en game${rejected.length > 0 ? ` · ⚠️ ${rejected.length} erreur(s) API` : ""}`,
             });
 
         await interaction.editReply({ content: null, embeds: [embed] });
-
 
     },
 };
