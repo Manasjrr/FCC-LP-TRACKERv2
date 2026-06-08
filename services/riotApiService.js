@@ -108,7 +108,6 @@ async function getChampionMasteries(puuid) {
 // ─── Status API ───────────────────────────────────────────────────────────────
 async function checkApiStatus() {
     try {
-        // ✅ FIX : utiliser riotGet pour bénéficier du timeout
         // Avant : axios.get direct sans timeout → peut bloquer indéfiniment
         const res = await riotGet(
             "https://euw1.api.riotgames.com/lol/status/v4/platform-data"
@@ -120,6 +119,33 @@ async function checkApiStatus() {
         return false;
     }
 }
+
+// ─── Fetch des lives game (/ingame) ───────────────────────────────────────────────────────────────
+async function getActiveGame(puuid) {
+    try {
+        const res = await riotGet(
+            `https://euw1.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/${puuid}`
+        );
+        logger.api("API", `getActiveGame OK pour puuid ${puuid.substring(0, 8)}...`, {
+            gameId: res.data?.gameId,
+            queueId: res.data?.gameQueueConfigId,
+            gameLength: res.data?.gameLength,
+        });
+
+        return res.data;
+    } catch (err) {
+        if (err.response?.status === 404) {
+            logger.debug("API", `getActiveGame 404 — pas en game : ${puuid.substring(0, 8)}...`);
+            return null;
+        }
+        logger.error("API", `getActiveGame erreur pour ${puuid.substring(0, 8)}...`, {
+            status: err.response?.status,
+            message: err.message,
+        });
+        throw err;
+    }
+}
+
 
 module.exports = {
     riotGet,
@@ -133,4 +159,5 @@ module.exports = {
     getTimeline,
     getChampionMasteries,
     checkApiStatus,
+    getActiveGame
 };
