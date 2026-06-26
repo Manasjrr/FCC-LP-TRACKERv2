@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { sendWeeklyRecap } = require('../utils/weeklyRecap');  // ✅ CORRECTION ICI
+const { sendWeeklyRecap } = require('../utils/weeklyRecap');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -11,9 +11,7 @@ module.exports = {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            console.log('🔧 Force recap demandé par:', interaction.user.tag);
-
-            // ✅ Appeler sendWeeklyRecap au lieu de generateWeeklyRecap
+            console.log('Force recap demandé par:', interaction.user.tag);
             await sendWeeklyRecap(interaction.client);
 
             await interaction.editReply({

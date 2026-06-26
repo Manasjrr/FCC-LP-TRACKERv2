@@ -4,7 +4,8 @@ const logger = require('./loggers');
 
 // ─── Stats hebdomadaires d'un joueur ─────────────────────────────────────────
 function getPlayerWeeklyStats(player, weekStart, weekEnd) {
-    const iso = [weekStart.toISOString(), weekEnd.toISOString()];
+    const startMs = weekStart.getTime();
+    const endMs = weekEnd.getTime();
 
     return global.db.prepare(`
         SELECT 
@@ -14,32 +15,36 @@ function getPlayerWeeklyStats(player, weekStart, weekEnd) {
             AVG(CAST(mh.kills   AS REAL))                         AS avg_kills,
             AVG(CAST(mh.deaths  AS REAL))                         AS avg_deaths,
             AVG(CAST(mh.assists AS REAL))                         AS avg_assists,
+            SUM(mh.lp_change)                                     AS total_lp_change,
             (SELECT rank_before FROM match_history
-             WHERE player_id = ? AND datetime(game_creation/1000,'unixepoch') BETWEEN datetime(?) AND datetime(?)
+             WHERE player_id = ? AND game_creation BETWEEN ? AND ?
              ORDER BY game_creation ASC  LIMIT 1)                 AS week_start_rank,
             (SELECT lp_before   FROM match_history
-             WHERE player_id = ? AND datetime(game_creation/1000,'unixepoch') BETWEEN datetime(?) AND datetime(?)
+             WHERE player_id = ? AND game_creation BETWEEN ? AND ?
              ORDER BY game_creation ASC  LIMIT 1)                 AS week_start_lp,
             (SELECT rank_after  FROM match_history
-             WHERE player_id = ? AND datetime(game_creation/1000,'unixepoch') BETWEEN datetime(?) AND datetime(?)
+             WHERE player_id = ? AND game_creation BETWEEN ? AND ?
              ORDER BY game_creation DESC LIMIT 1)                 AS week_end_rank,
             (SELECT lp_after    FROM match_history
-             WHERE player_id = ? AND datetime(game_creation/1000,'unixepoch') BETWEEN datetime(?) AND datetime(?)
+             WHERE player_id = ? AND game_creation BETWEEN ? AND ?
              ORDER BY game_creation DESC LIMIT 1)                 AS week_end_lp
         FROM match_history mh
         WHERE mh.player_id = ?
-          AND datetime(mh.game_creation/1000,'unixepoch') BETWEEN datetime(?) AND datetime(?)
+          AND mh.game_creation BETWEEN ? AND ?
     `).get(
-        player.id, ...iso,   // week_start_rank
-        player.id, ...iso,   // week_start_lp
-        player.id, ...iso,   // week_end_rank
-        player.id, ...iso,   // week_end_lp
-        player.id, ...iso    // WHERE principal
+        player.id, startMs, endMs,   // week_start_rank
+        player.id, startMs, endMs,   // week_start_lp
+        player.id, startMs, endMs,   // week_end_rank
+        player.id, startMs, endMs,   // week_end_lp
+        player.id, startMs, endMs    // WHERE principal
     );
 }
 
 // ─── Champion le plus joué ────────────────────────────────────────────────────
 function getPlayerTopChampion(player, weekStart, weekEnd) {
+    const startMs = weekStart.getTime();
+    const endMs = weekEnd.getTime();
+
     const row = global.db.prepare(`
         SELECT
             champion_name,
@@ -47,11 +52,11 @@ function getPlayerTopChampion(player, weekStart, weekEnd) {
             SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END)        AS wins_count
         FROM match_history
         WHERE player_id = ?
-          AND datetime(game_creation/1000,'unixepoch') BETWEEN datetime(?) AND datetime(?)
+          AND game_creation BETWEEN ? AND ?
         GROUP BY champion_name
         ORDER BY games_count DESC
         LIMIT 1
-    `).get(player.id, weekStart.toISOString(), weekEnd.toISOString());
+    `).get(player.id, startMs, endMs);
 
     if (!row) return { champion_name: 'Aucun', games_count: 0, wins_count: 0, winrate: 0 };
 
@@ -67,7 +72,8 @@ function getPlayerTopChampion(player, weekStart, weekEnd) {
 
 // ─── Calcul LP nets ───────────────────────────────────────────────────────────
 function calculateNetLP(startRank, startLP, endRank, endLP) {
-    if (!startRank || !endRank || startLP === null || endLP === null) return null;
+    if (!startRank || !endRank || startLP === null || startLP === undefined
+        || endLP === null || endLP === undefined) return null;
 
     const startData = getRankOrder(startRank, startLP);
     const endData = getRankOrder(endRank, endLP);
@@ -76,8 +82,10 @@ function calculateNetLP(startRank, startLP, endRank, endLP) {
 
 // ─── Génération récap d'un serveur ────────────────────────────────────────────
 async function generateRecapForGuild(guildId, weekStart, weekEnd) {
+    // FIX : récupération du guild_user_id depuis player_guilds
+    // pour avoir le bon user_id par serveur (et non celui de l'insertion initiale)
     const players = global.db.prepare(`
-        SELECT DISTINCT p.* FROM players p
+        SELECT DISTINCT p.*, pg.user_id AS guild_user_id FROM players p
         JOIN player_guilds pg ON pg.player_id = p.id
         WHERE pg.guild_id = ? AND pg.active = 1
     `).all(guildId);
@@ -93,7 +101,7 @@ async function generateRecapForGuild(guildId, weekStart, weekEnd) {
         try {
             const weekStats = getPlayerWeeklyStats(player, weekStart, weekEnd);
 
-            if (!weekStats || weekStats.total_games < 3) continue;
+            if (!weekStats || weekStats.total_games < 1) continue;
 
             const topChampion = getPlayerTopChampion(player, weekStart, weekEnd);
             const netLP = calculateNetLP(
@@ -103,7 +111,7 @@ async function generateRecapForGuild(guildId, weekStart, weekEnd) {
 
             playerStats.push({
                 riot_id: player.riot_id,
-                user_id: player.user_id,
+                user_id: player.guild_user_id,
                 total_games: weekStats.total_games,
                 wins: weekStats.wins,
                 losses: weekStats.losses,
@@ -159,7 +167,8 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
 
         let rankDisplay;
         if (player.week_start_rank && player.week_end_rank
-            && player.week_start_lp !== null && player.week_end_lp !== null) {
+            && player.week_start_lp !== null && player.week_start_lp !== undefined
+            && player.week_end_lp !== null && player.week_end_lp !== undefined) {
             if (player.week_start_rank === player.week_end_rank) {
                 rankDisplay = `${getRankEmoji(player.week_end_rank)} ${player.week_end_rank} (${player.week_start_lp} LP → ${player.week_end_lp} LP)`;
             } else {
@@ -176,19 +185,21 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
         description += `└─ ⚔️ **KDA moyen :** ${Number(player.avg_kills).toFixed(1)}/${Number(player.avg_deaths).toFixed(1)}/${Number(player.avg_assists).toFixed(1)}\n\n`;
     });
 
-    //  Vérification longueur description (limite Discord : 4096 caractères)
-    if (description.length > 3900) {
-        description = description.substring(0, 3900) + '\n*... (trop de joueurs pour afficher tout)*\n\n';
-    }
-
     const totalGames = playerStats.reduce((s, p) => s + p.total_games, 0);
     const totalWins = playerStats.reduce((s, p) => s + p.wins, 0);
     const totalLP = playerStats.reduce((s, p) => s + p.total_lp_change, 0);
     const groupWR = totalGames > 0 ? ((totalWins / totalGames) * 100).toFixed(1) : '0.0';
 
-    description += `📊 **STATS GLOBALES**\n`;
-    description += `• Total games : ${totalGames} • Groupe WR : ${groupWR}%\n`;
-    description += `• LP net du groupe : ${totalLP >= 0 ? '+' : ''}${totalLP} LP`;
+    const globalStatsBlock =
+        `📊 **STATS GLOBALES**\n` +
+        `• Total games : ${totalGames} • Groupe WR : ${groupWR}%\n` +
+        `• LP net du groupe : ${totalLP >= 0 ? '+' : ''}${totalLP} LP`;
+    const MAX_BODY_LENGTH = 4096 - globalStatsBlock.length - 10;
+    if (description.length > MAX_BODY_LENGTH) {
+        description = description.substring(0, MAX_BODY_LENGTH) + '\n*... (trop de joueurs pour afficher tout)*\n\n';
+    }
+
+    description += globalStatsBlock;
 
     return new EmbedBuilder()
         .setTitle('🏆 RÉCAP HEBDOMADAIRE')
@@ -202,8 +213,8 @@ async function sendWeeklyRecap(client) {
     logger.info('RECAP', 'Génération du récap hebdomadaire...');
 
     const now = new Date();
+
     const weekEnd = new Date(now);
-    weekEnd.setDate(now.getDate() - 1);
     weekEnd.setHours(23, 59, 59, 999);
 
     const weekStart = new Date(weekEnd);
@@ -239,7 +250,6 @@ async function sendWeeklyRecap(client) {
                 continue;
             }
 
-            
             const channelUsage = global.db.prepare(`
                 SELECT channel_id, COUNT(*) AS usage_count
                 FROM player_guilds
@@ -258,7 +268,7 @@ async function sendWeeklyRecap(client) {
                 }
             }
 
-            // Fallbacks si aucun canal de monitoring trouvé
+            // Fallback si aucun canal de monitoring trouvé
             if (!targetChannel) {
                 const fallbackNames = ['lol', 'league', 'league-of-legends', 'gaming', 'general', 'général', 'main'];
                 targetChannel = discordGuild.channels.cache.find(ch =>
