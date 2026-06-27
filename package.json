@@ -10,17 +10,17 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@discordjs/rest": "^2.6.0",
+    "@discordjs/rest": "^2.6.1",
     "@types/node": "^22.13.11",
-    "axios": "^1.9.0",
-    "better-sqlite3": "^12.6.2",
-    "canvas": "^3.1.2",
+    "axios": "^1.18.1",
+    "better-sqlite3": "^12.11.1",
+    "canvas": "^3.2.3",
     "chart.js": "^4.5.0",
     "chartjs-node-canvas": "^5.0.0",
-    "discord-api-types": "^0.38.11",
+    "discord-api-types": "^0.38.49",
     "discord.js": "^14.25.1",
     "dotenv": "^16.5.0",
-    "node-cron": "^4.2.1"
+    "node-cron": "^4.5.0"
   },
   "overrides": {
     "undici": "^7.0.0"
