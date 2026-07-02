@@ -68,12 +68,12 @@ const ADC_ONLY_CHAMPIONS = new Set([
     29,  // Twitch
     96,  // Kog'Maw
     42,  // Corki
-    133, // Quinn
     221, // Zeri
     360, // Samira
     895, // Nilah
     903, // Smolder
     523, // Aphelios
+    804, // Yunara
 ]);
 
 // ─── Détection du rôle via les sorts d'invocateur + champion ─────────────────
@@ -464,7 +464,7 @@ function getChampionName(championId) {
         101: "Xerath", 5: "Xin Zhao", 157: "Yasuo", 777: "Yone",
         83: "Yorick", 350: "Yuumi", 154: "Zac", 238: "Zed",
         221: "Zeri", 115: "Ziggs", 26: "Zilean", 142: "Zoe",
-        143: "Zyra",
+        143: "Zyra", 804: "Yunara",
     };
     return CHAMPION_NAMES[championId] ?? `Champion#${championId}`;
 }
