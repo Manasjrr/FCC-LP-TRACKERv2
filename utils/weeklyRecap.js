@@ -82,8 +82,6 @@ function calculateNetLP(startRank, startLP, endRank, endLP) {
 
 // ─── Génération récap d'un serveur ────────────────────────────────────────────
 async function generateRecapForGuild(guildId, weekStart, weekEnd) {
-    // FIX : récupération du guild_user_id depuis player_guilds
-    // pour avoir le bon user_id par serveur (et non celui de l'insertion initiale)
     const players = global.db.prepare(`
         SELECT DISTINCT p.*, pg.user_id AS guild_user_id FROM players p
         JOIN player_guilds pg ON pg.player_id = p.id
@@ -102,6 +100,17 @@ async function generateRecapForGuild(guildId, weekStart, weekEnd) {
             const weekStats = getPlayerWeeklyStats(player, weekStart, weekEnd);
 
             if (!weekStats || weekStats.total_games < 1) continue;
+
+            // calcul de LP net impossible / faux (delta artificiel énorme)
+            const isUnranked = (rank) =>
+                !rank || rank === 'UNRANKED' || rank === 'Non classé';
+
+            if (isUnranked(weekStats.week_start_rank)) {
+                logger.info('RECAP', `${player.riot_id} ignoré (était non classé en début de semaine)`, {
+                    week_start_rank: weekStats.week_start_rank,
+                });
+                continue;
+            }
 
             const topChampion = getPlayerTopChampion(player, weekStart, weekEnd);
             const netLP = calculateNetLP(
