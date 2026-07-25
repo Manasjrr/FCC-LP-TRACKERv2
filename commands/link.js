@@ -1,43 +1,33 @@
 const { SlashCommandBuilder } = require("discord.js");
-const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
+const { getRankEmoji } = require("../utils/rankUtils");
 const logger = require("../utils/loggers");
-
-function sortPlayersByRank(players) {
-    return players.sort((a, b) => {
-        const rankA = getRankOrder(a.last_rank, a.last_lp);
-        const rankB = getRankOrder(b.last_rank, b.last_lp);
-        if (rankB.order !== rankA.order) return rankB.order - rankA.order;
-        if (rankB.divisionOrder !== rankA.divisionOrder) return rankB.divisionOrder - rankA.divisionOrder;
-        return (rankB.lp || 0) - (rankA.lp || 0);
-    });
-}
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("link")
         .setDescription("Se lier à un compte du classement ou voir son compte actuel")
-        .addIntegerOption((option) =>
+        .addStringOption((option) =>
             option
-                .setName("numero")
-                .setDescription("Numéro du classement (utilisez /list pour voir)")
+                .setName("joueur")
+                .setDescription("Riot ID du compte à lier")
                 .setRequired(false)
-                .setMinValue(1),
+                .setAutocomplete(true)
         ),
 
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        const numero = interaction.options.getInteger("numero");
+        const riotId = interaction.options.getString("joueur");
         const userId = interaction.user.id;
         const guildId = interaction.guildId;
 
         logger.info('COMMAND', `/link exécuté par ${interaction.user.tag}`, {
-            numero: numero || 'consultation',
+            joueur: riotId || 'consultation',
             guild: guildId
         });
 
-        // ── PAS DE NUMÉRO → AFFICHER COMPTE LIÉ ──────────────────────────────
-        if (!numero) {
+        // ── PAS DE JOUEUR → AFFICHER COMPTE LIÉ ──────────────────────────────
+        if (!riotId) {
             const linkedPlayer = global.db.prepare(`
                 SELECT p.* FROM user_links ul
                 JOIN players p ON ul.player_id = p.id
@@ -46,7 +36,7 @@ module.exports = {
 
             if (!linkedPlayer) {
                 return interaction.editReply(
-                    "❌ **Aucun compte lié**\n\n*Utilisez `/link numero:X` pour vous lier à un compte*"
+                    "**Aucun compte lié**\n\n*Utilisez `/link joueur:<pseudo>` pour vous lier à un compte*"
                 );
             }
 
@@ -58,27 +48,23 @@ module.exports = {
             );
         }
 
-        // ── NUMÉRO → CRÉER LIAISON ────────────────────────────────────────────
-        // Récupérer les joueurs actifs sur CE serveur via player_guilds
-        const players = global.db.prepare(`
+        // ── JOUEUR → CRÉER LIAISON ────────────────────────────────────────────
+        const targetPlayer = global.db.prepare(`
             SELECT p.* FROM players p
             JOIN player_guilds pg ON pg.player_id = p.id
-            WHERE pg.guild_id = ? AND pg.active = 1
-        `).all(guildId);
+            WHERE pg.guild_id = ? AND pg.active = 1 AND p.riot_id = ?
+        `).get(guildId, riotId);
 
-        if (!players?.length) {
-            return interaction.editReply("❌ Aucun compte disponible sur ce serveur");
-        }
-
-        sortPlayersByRank(players);
-
-        if (numero > players.length) {
+        if (!targetPlayer) {
+            logger.warn('COMMAND', `Compte "${riotId}" introuvable dans /link`, {
+                user: interaction.user.tag,
+                guild: guildId
+            });
             return interaction.editReply(
-                `❌ Numéro invalide ! Utilisez un numéro entre **1** et **${players.length}**`
+                `Aucun compte trouvé pour **${riotId}** sur ce serveur.\n` +
+                `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
             );
         }
-
-        const targetPlayer = players[numero - 1];
 
         // ── Vérification liaison existante ────────────────────────────────────
         const existingLink = global.db.prepare(
@@ -86,7 +72,7 @@ module.exports = {
         ).get(targetPlayer.id, guildId);
 
         if (existingLink && existingLink.user_id !== userId) {
-            return interaction.editReply("❌ Ce compte est déjà lié à un autre utilisateur !");
+            return interaction.editReply("Ce compte est déjà lié à un autre utilisateur !");
         }
 
         // ── Insertion BDD ─────────────────────────────────────────────────────
@@ -111,7 +97,28 @@ module.exports = {
 
         } catch (err) {
             logger.error('DB', `Erreur liaison /link`, { error: err.message, guild: guildId });
-            return interaction.editReply("❌ Erreur lors de la liaison du compte");
+            return interaction.editReply("Erreur lors de la liaison du compte");
         }
+    },
+
+    async autocomplete(interaction) {
+        const focusedValue = interaction.options.getFocused().toLowerCase();
+        const guildId = interaction.guildId;
+
+        if (!global.db) return interaction.respond([]);
+
+        const rows = global.db.prepare(`
+            SELECT DISTINCT p.riot_id FROM players p
+            JOIN player_guilds pg ON pg.player_id = p.id
+            WHERE pg.guild_id = ? AND pg.active = 1
+        `).all(guildId);
+
+        const filtered = rows
+            .filter((r) => r.riot_id.toLowerCase().includes(focusedValue))
+            .slice(0, 25);
+
+        await interaction.respond(
+            filtered.map((r) => ({ name: r.riot_id, value: r.riot_id }))
+        );
     },
 };
