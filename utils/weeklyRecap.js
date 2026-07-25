@@ -161,7 +161,7 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
     let description = `📅 **Semaine du ${startStr} au ${endStr}**\n\n`;
     description += `📈 **LES JOUEURS DE LA SEMAINE :**\n\n`;
 
-    layerStats.forEach((player, index) => {
+    playerStats.forEach((player, index) => {
         let medal;
 
         // Les médailles ne sont attribuées que si le joueur a gagné des LP
@@ -171,7 +171,9 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
         else if (player.total_lp_change >= 150) medal = '💎';
         else if (player.total_lp_change >= 75) medal = '🔥';
         else if (player.total_lp_change > 0) medal = '✨';
+        else if (player.total_lp_change > -50) medal = '👎';
         else if (player.total_lp_change > -75) medal = '💀';
+        else if (player.total_lp_change > -125) medal = '<:ishowspeedftn:1530652099732574218>';
         else medal = '<:etoilesHLE:1431326676629061854>';
 
         const lpSign = player.total_lp_change >= 0 ? '+' : '';
