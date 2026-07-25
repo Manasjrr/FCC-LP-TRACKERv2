@@ -161,11 +161,14 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
     let description = `📅 **Semaine du ${startStr} au ${endStr}**\n\n`;
     description += `📈 **LES JOUEURS DE LA SEMAINE :**\n\n`;
 
-    playerStats.forEach((player, index) => {
+    layerStats.forEach((player, index) => {
         let medal;
-        if (index === 0) medal = '🥇';
-        else if (index === 1) medal = '🥈';
-        else if (index === 2) medal = '🥉';
+
+        // Les médailles ne sont attribuées que si le joueur a gagné des LP
+        if (player.total_lp_change > 0 && index === 0) medal = '🥇';
+        else if (player.total_lp_change > 0 && index === 1) medal = '🥈';
+        else if (player.total_lp_change > 0 && index === 2) medal = '🥉';
+        else if (player.total_lp_change >= 150) medal = '💎';
         else if (player.total_lp_change >= 75) medal = '🔥';
         else if (player.total_lp_change > 0) medal = '✨';
         else if (player.total_lp_change > -75) medal = '💀';
