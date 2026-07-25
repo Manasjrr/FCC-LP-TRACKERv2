@@ -1,67 +1,51 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const { getRankOrder } = require('../utils/rankUtils');
 const logger = require("../utils/loggers");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("remove")
         .setDescription("Supprimer un compte du monitoring")
-        .addIntegerOption((option) =>
+        .addStringOption((option) =>
             option
-                .setName("numero")
-                .setDescription("Numéro du compte à supprimer (voir avec /list)")
+                .setName("joueur")
+                .setDescription("Riot ID du compte à supprimer")
                 .setRequired(true)
-                .setMinValue(1),
+                .setAutocomplete(true)
         ),
 
     async execute(interaction) {
         await interaction.deferReply();
 
-        const numero = interaction.options.getInteger("numero");
+        const riotId = interaction.options.getString("joueur");
 
         logger.info('COMMAND', `/remove exécuté par ${interaction.user.tag}`, {
-            numero,
+            riotId,
             guild: interaction.guildId
         });
 
         if (!global.db) {
             logger.error('DB', `Base de données non disponible pour /remove`, { guild: interaction.guildId });
-            return interaction.editReply("❌ Base de données non disponible");
+            return interaction.editReply("Base de données non disponible");
         }
 
-        // ── Récupérer les joueurs actifs sur CE serveur ───────────────────────
-        const rows = global.db.prepare(`
+        // ── Récupérer le compte ciblé sur CE serveur ──────────────────────────
+        const targetRow = global.db.prepare(`
             SELECT p.*, pg.id as pg_id, pg.user_id as added_by
             FROM players p
             JOIN player_guilds pg ON pg.player_id = p.id
-            WHERE pg.guild_id = ? AND pg.active = 1
-        `).all(interaction.guildId);
+            WHERE pg.guild_id = ? AND pg.active = 1 AND p.riot_id = ?
+        `).get(interaction.guildId, riotId);
 
-        if (!rows || rows.length === 0) {
-            logger.info('COMMAND', `Aucun compte à supprimer`, { guild: interaction.guildId });
-            return interaction.editReply("📭 Aucun compte à supprimer.");
-        }
-
-        rows.sort((a, b) => {
-            const rankA = getRankOrder(a.last_rank, a.last_lp);
-            const rankB = getRankOrder(b.last_rank, b.last_lp);
-
-            if (rankA.order !== rankB.order) return rankB.order - rankA.order;
-            if (rankA.divisionOrder !== rankB.divisionOrder) return rankB.divisionOrder - rankA.divisionOrder;
-            return rankB.lp - rankA.lp;
-        });
-
-        if (numero < 1 || numero > rows.length) {
-            logger.warn('COMMAND', `Numéro invalide dans /remove`, {
-                numero,
-                max: rows.length,
+        if (!targetRow) {
+            logger.warn('COMMAND', `Compte "${riotId}" introuvable dans /remove`, {
                 user: interaction.user.tag,
                 guild: interaction.guildId
             });
-            return interaction.editReply(`❌ Numéro invalide ! Choisissez entre 1 et ${rows.length}.`);
+            return interaction.editReply(
+                `Aucun compte trouvé pour **${riotId}** sur ce serveur.\n` +
+                `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
+            );
         }
-
-        const targetRow = rows[numero - 1];
 
         try {
             // ── Désactivation dans player_guilds UNIQUEMENT ───────────────────
@@ -108,7 +92,28 @@ module.exports = {
                 playerId: targetRow.id,
                 guild: interaction.guildId
             });
-            return interaction.editReply("❌ Erreur lors de la suppression.");
+            return interaction.editReply("Erreur lors de la suppression.");
         }
+    },
+
+    async autocomplete(interaction) {
+        const focusedValue = interaction.options.getFocused().toLowerCase();
+        const guildId = interaction.guildId;
+
+        if (!global.db) return interaction.respond([]);
+
+        const rows = global.db.prepare(`
+            SELECT DISTINCT p.riot_id FROM players p
+            JOIN player_guilds pg ON pg.player_id = p.id
+            WHERE pg.guild_id = ? AND pg.active = 1
+        `).all(guildId);
+
+        const filtered = rows
+            .filter((r) => r.riot_id.toLowerCase().includes(focusedValue))
+            .slice(0, 25);
+
+        await interaction.respond(
+            filtered.map((r) => ({ name: r.riot_id, value: r.riot_id }))
+        );
     },
 };
