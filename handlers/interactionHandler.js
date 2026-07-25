@@ -11,6 +11,9 @@ async function handleInteraction(interaction) {
     if (interaction.isChatInputCommand()) {
         return handleCommand(interaction);
     }
+    if (interaction.isAutocomplete()) {
+        return handleAutocomplete(interaction);
+    }
     if (interaction.isButton()) {
         return handleButton(interaction);
     }
@@ -28,6 +31,20 @@ async function handleCommand(interaction) {
         await command.execute(interaction);
     } catch (error) {
         logger.error("HANDLER", `Erreur commande /${interaction.commandName}`, {
+            error: error.message,
+        });
+    }
+}
+
+// ─── Autocomplétion ───────────────────────────────────────────────────────────
+async function handleAutocomplete(interaction) {
+    const command = interaction.client.commands.get(interaction.commandName);
+    if (!command || !command.autocomplete) return;
+
+    try {
+        await command.autocomplete(interaction);
+    } catch (error) {
+        logger.error("HANDLER", `Erreur autocomplete /${interaction.commandName}`, {
             error: error.message,
         });
     }
@@ -289,4 +306,4 @@ async function handleModal(interaction) {
     }
 }
 
-module.exports = { handleInteraction };
+module.exports = { handleInteraction, handleInteraction };

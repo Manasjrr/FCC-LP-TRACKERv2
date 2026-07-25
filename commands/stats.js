@@ -64,12 +64,12 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName("stats")
         .setDescription("Statistiques détaillées d'un joueur avec analyse de performance")
-        .addIntegerOption((option) =>
+        .addStringOption((option) =>
             option
-                .setName("rang")
-                .setDescription("Position du joueur dans le classement serveur")
+                .setName("joueur")
+                .setDescription("Riot ID du joueur")
                 .setRequired(false)
-                .setMinValue(1)
+                .setAutocomplete(true)
         ),
 
     async execute(interaction) {
@@ -79,9 +79,11 @@ module.exports = {
             return;
         }
 
+        const joueurOption = interaction.options.getString("joueur");
+
         logger.info('COMMAND', `/stats exécuté par ${interaction.user.tag}`, {
             guild: interaction.guildId,
-            rang: interaction.options.getInteger("rang") || 'lié'
+            joueur: joueurOption || null,
         });
 
         if (!global.db) {
@@ -90,19 +92,23 @@ module.exports = {
         }
 
         let targetPlayer = null;
-        const rankOption = interaction.options.getInteger("rang");
 
-        if (rankOption) {
-            targetPlayer = getPlayerByRank(rankOption, interaction.guildId);
+        if (joueurOption) {
+            targetPlayer = getPlayerByRiotId(joueurOption, interaction.guildId);
             if (!targetPlayer) {
-                logger.warn('COMMAND', `Position #${rankOption} introuvable dans /stats`, { guild: interaction.guildId });
-                return interaction.editReply(`❌ Aucun joueur trouvé à la position **#${rankOption}**`);
+                logger.warn('COMMAND', `Joueur "${joueurOption}" introuvable dans /stats`, { guild: interaction.guildId });
+                return interaction.editReply(
+                    `❌ Aucun joueur trouvé pour **${joueurOption}** sur ce serveur.\n` +
+                    `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
+                );
             }
         } else {
             targetPlayer = getLinkedPlayer(interaction.user.id, interaction.guildId);
             if (!targetPlayer) {
                 logger.info('COMMAND', `Aucun compte lié pour ${interaction.user.tag} dans /stats`, { guild: interaction.guildId });
-                return interaction.editReply("❌ Aucun compte lié ! Utilise `/link` ou spécifie un rang.");
+                return interaction.editReply(
+                    "❌ Aucun compte lié ! Utilise `/link` ou spécifie un `joueur`."
+                );
             }
         }
 
@@ -115,7 +121,7 @@ module.exports = {
             const [playerStats, matchAnalysis, serverPosition] = await Promise.all([
                 getPlayerCurrentStats(targetPlayer),
                 getMatchAnalysis(targetPlayer),
-                getServerPosition(targetPlayer.riot_id, targetPlayer.guild_id),
+                getServerPosition(targetPlayer.riot_id, interaction.guildId),
             ]);
 
             const embed = await createAdvancedStatsEmbed(
@@ -145,30 +151,33 @@ module.exports = {
             await interaction.editReply({ embeds: [fallbackEmbed] }).catch(() => { });
         }
     },
+
+    async autocomplete(interaction) {
+        const focusedValue = interaction.options.getFocused().toLowerCase();
+        const guildId = interaction.guildId;
+
+        if (!global.db) return interaction.respond([]);
+
+        const rows = global.db.prepare(`
+        SELECT DISTINCT p.riot_id FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.guild_id = ? AND pg.active = 1
+    `).all(guildId);
+
+        const filtered = rows
+            .filter((r) => r.riot_id.toLowerCase().includes(focusedValue))
+            .slice(0, 25); // Discord limite à 25 choix max
+
+        await interaction.respond(
+            filtered.map((r) => ({ name: r.riot_id, value: r.riot_id }))
+        );
+    },
+
 };
 
 // ─────────────────────────────────────────
 //  RÉCUPÉRATION DES JOUEURS (DB)
 // ─────────────────────────────────────────
-function getPlayerByRank(position, guildId) {
-    const rows = global.db.prepare(`
-        SELECT p.* FROM players p
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE pg.guild_id = ? AND pg.active = 1
-    `).all(guildId);
-
-    if (!rows?.length) return null;
-
-    rows.sort((a, b) => {
-        const rA = getRankOrder(a.last_rank, a.last_lp);
-        const rB = getRankOrder(b.last_rank, b.last_lp);
-        if (rB.order !== rA.order) return rB.order - rA.order;
-        if (rB.divisionOrder !== rA.divisionOrder) return rB.divisionOrder - rA.divisionOrder;
-        return (rB.lp || 0) - (rA.lp || 0);
-    });
-
-    return rows[position - 1] ?? null;
-}
 
 function getLinkedPlayer(userId, guildId) {
     return global.db.prepare(`
@@ -201,6 +210,27 @@ function getServerPosition(targetRiotId, guildId) {
     const percentile = total > 0 ? Math.round((position / total) * 100) : 0;
 
     return { position, total, percentile };
+}
+
+function getPlayerByRiotId(riotId, guildId) {
+    // Recherche exacte d'abord
+    let player = global.db.prepare(`
+        SELECT p.* FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.guild_id = ? AND pg.active = 1 AND p.riot_id = ?
+    `).get(guildId, riotId);
+
+    if (player) return player;
+
+    // Fallback recherche approximative (au cas où l'utilisateur tape sans autocomplete)
+    player = global.db.prepare(`
+        SELECT p.* FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.guild_id = ? AND pg.active = 1 AND LOWER(p.riot_id) LIKE LOWER(?)
+        LIMIT 1
+    `).get(guildId, `%${riotId}%`);
+
+    return player ?? null;
 }
 
 // ─────────────────────────────────────────
