@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const { getActiveGame } = require("../services/riotApiService");
 const { getRankEmoji } = require("../utils/rankUtils");
+const { getChampionName } = require("../utils/championUtils");
 const logger = require("../utils/loggers");
 
 // ─── Maps utilitaires ─────────────────────────────────────────────────────────
@@ -18,125 +19,277 @@ const ROLE_EMOJIS = {
     NONE: "❓",
 };
 
-// ─── IDs des sorts d'invocateur ───────────────────────────────────────────────
-const SMITE = 11;
-const FLASH = 4;
-const HEAL = 7;
-const EXHAUST = 3;
-const IGNITE = 14;
-const BARRIER = 21;
-const TELEPORT = 12;
-const GHOST = 6;
-const CLEANSE = 1;
+const ROLES = ["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"];
 
-// ─── Champions exclusivement joués Support ────────────────────────────────────
-// Utilisé pour affiner la détection Bot vs Support quand Heal est présent
-const SUPPORT_ONLY_CHAMPIONS = new Set([
-    40,  // Janna
-    267, // Nami
-    412, // Thresh
-    201, // Braum
-    117, // Lulu
-    37,  // Sona
-    16,  // Soraka
-    25,  // Morgana
-    44,  // Taric
-    432, // Bard
-    497, // Rakan
-    526, // Rell
-    902, // Milio
-    235, // Senna    (peut être ADC, mais souvent support)
-    147, // Seraphine
-    888, // Renata Glasc
-    350, // Yuumi
-]);
+// ─── ID summoner spell Smite ───────────────────────────────
+const SMITE_SPELL_ID = 11;
 
-// ─── Champions exclusivement joués ADC ───────────────────────────────────────
-const ADC_ONLY_CHAMPIONS = new Set([
-    51,  // Caitlyn
-    222, // Jinx
-    202, // Jhin
-    22,  // Ashe
-    15,  // Sivir
-    429, // Kalista
-    498, // Xayah
-    110, // Varus
-    119, // Draven
-    236, // Lucian
-    21,  // Miss Fortune
-    18,  // Tristana
-    29,  // Twitch
-    96,  // Kog'Maw
-    42,  // Corki
-    221, // Zeri
-    360, // Samira
-    895, // Nilah
-    903, // Smolder
-    523, // Aphelios
-    804, // Yunara
-]);
+// ─── Pool de rôles probables par champion ─────────────────────────────────────
+const CHAMPION_ROLES = {
+    266: { TOP: 0.9, JUNGLE: 0.1 },                    // Aatrox
+    103: { MID: 0.85, TOP: 0.15 },                      // Ahri
+    84: { MID: 0.7, TOP: 0.3 },                        // Akali
+    166: { MID: 0.8, TOP: 0.1 },                        // Akshan
+    12: { SUPPORT: 0.9, TOP: 0.1 },                    // Alistar
+    32: { JUNGLE: 0.85, SUPPORT: 0.15 },                // Amumu
+    34: { MID: 1.0, TOP: 0.2 },                         // Anivia
+    1: { MID: 0.6, SUPPORT: 0.2 },                    // Annie
+    523: { ADC: 1.0 },                                  // Aphelios
+    22: { ADC: 0.9, SUPPORT: 0.1 },                    // Ashe
+    136: { MID: 1.0 },                                  // Aurelion Sol
+    268: { MID: 1.0 },                                  // Azir
+    432: { SUPPORT: 1.0 },                              // Bard
+    200: { JUNGLE: 1.0 },                               // Bel'Veth
+    53: { SUPPORT: 1 },                                // Blitzcrank
+    63: { SUPPORT: 0.5, MID: 0.5, JUNGLE: 0.5 },       // Brand
+    201: { SUPPORT: 1.0 },                              // Braum
+    233: { JUNGLE: 0.9, TOP: 0.1 },                     // Briar
+    51: { ADC: 1.0 },                                  // Caitlyn
+    164: { TOP: 1.0, SUPPORT: 0.2 },                   // Camille
+    69: { MID: 0.9, TOP: 0.1 },                        // Cassiopeia
+    31: { TOP: 0.6, JUNGLE: 0.4 },                     // Cho'Gath
+    42: { MID: 0.1, ADC: 0.7 },                        // Corki
+    122: { TOP: 1.0 },                                  // Darius
+    131: { JUNGLE: 0.5, MID: 0.5 },                     // Diana
+    36: { TOP: 0.8, JUNGLE: 0.2 },                     // Dr. Mundo
+    119: { ADC: 1.0 },                                  // Draven
+    245: { JUNGLE: 0.7, MID: 0.3 },                     // Ekko
+    60: { JUNGLE: 0.8, SUPPORT: 0.2 },                 // Elise
+    28: { JUNGLE: 1.0 },                               // Evelynn
+    81: { ADC: 0.8, MID: 0.05 },                        // Ezreal
+    9: { JUNGLE: 0.9, SUPPORT: 0.01 },                 // Fiddlesticks
+    114: { TOP: 1.0 },                                  // Fiora
+    105: { MID: 0.6, JUNGLE: 0.1 },                     // Fizz
+    3: { SUPPORT: 0.5, MID: 0.5 },                    // Galio
+    41: { TOP: 1.0 },                                  // Gangplank
+    86: { TOP: 1.0 },                                  // Garen
+    150: { TOP: 0.8 },                                  // Gnar
+    79: { JUNGLE: 0.7, TOP: 0.3, MID: 0.1 },             // Gragas
+    104: { JUNGLE: 1.0 },                               // Graves
+    887: { TOP: 0.7 },                    // Gwen
+    120: { JUNGLE: 1.0 },                               // Hecarim
+    74: { MID: 0.01, SUPPORT: 0.5, TOP: 0.2 },                    // Heimerdinger
+    910: { MID: 0.8, SUPPORT: 0.2 },                    // Hwei
+    420: { TOP: 1.0 },                                  // Illaoi
+    39: { TOP: 0.9, MID: 0.25 },                        // Irelia
+    427: { JUNGLE: 1.0 },                               // Ivern
+    40: { SUPPORT: 1.0 },                              // Janna
+    59: { JUNGLE: 0.9, TOP: 0.1 },                     // Jarvan IV
+    24: { TOP: 0.75, JUNGLE: 0.3, MID: 0.2 },           // Jax
+    126: { MID: 0.2, TOP: 0.6 },                        // Jayce
+    202: { ADC: 1.0 },                                  // Jhin
+    222: { ADC: 1.0 },                                  // Jinx
+    145: { ADC: 1.0 },                                  // Kai'Sa
+    429: { ADC: 1.0 },                                  // Kalista
+    43: { SUPPORT: 0.8 },                                // Karma
+    30: { JUNGLE: 0.5, MID: 0.2, ADC: 0.4 },              // Karthus
+    38: { MID: 1.0 },                                 // Kassadin
+    55: { MID: 0.8 },                                   // Katarina
+    10: { TOP: 0.8 },                                    // Kayle
+    141: { JUNGLE: 1.0, TOP: 0.15 },                     // Kayn
+    85: { TOP: 0.55, MID: 0.5 },                        // Kennen
+    121: { JUNGLE: 1.0 },                               // Kha'Zix
+    203: { JUNGLE: 1.0 },                               // Kindred
+    240: { TOP: 1.0 },                                  // Kled
+    96: { ADC: 1.0 },                                  // Kog'Maw
+    897: { TOP: 1.0 },                                  // K'Sante
+    7: { MID: 1.0 },                                  // LeBlanc
+    64: { JUNGLE: 1.0 },                               // Lee Sin
+    89: { SUPPORT: 1.0 },                              // Leona
+    876: { JUNGLE: 0.7 },                               // Lillia
+    127: { MID: 1.0 },                                  // Lissandra
+    236: { ADC: 1.0 },                                  // Lucian
+    117: { SUPPORT: 1.0 },                              // Lulu
+    99: { MID: 0.6, SUPPORT: 0.4 },                    // Lux
+    54: { TOP: 0.7, SUPPORT: 0.3 },                    // Malphite
+    90: { MID: 0.8 },                                // Malzahar
+    57: { SUPPORT: 0.5, JUNGLE: 0.3, TOP: 0.2 },       // Maokai
+    11: { JUNGLE: 0.8, TOP: 0.1, MID: 0.1 },            // Master Yi
+    902: { SUPPORT: 1.0 },                              // Milio
+    21: { ADC: 1.0 },                                  // Miss Fortune
+    82: { TOP: 0.7, MID: 0.02 },                        // Mordekaiser
+    25: { SUPPORT: 0.8, MID: 0.02 },                    // Morgana
+    950: { MID: 0.6, JUNGLE: 0.8 },                     // Naafiri
+    267: { SUPPORT: 1.0 },                              // Nami
+    75: { TOP: 1.0, JUNGLE: 0.4 },                      // Nasus
+    111: { SUPPORT: 0.7 },                               // Nautilus
+    518: { MID: 0.45, SUPPORT: 0.7 },                    // Neeko
+    76: { JUNGLE: 1.0, TOP: 0.05, SUPPORT: 0.1 },        // Nidalee
+    895: { ADC: 0.7 },                                 // Nilah
+    56: { JUNGLE: 1.0 },                               // Nocturne
+    20: { JUNGLE: 1.0 },                               // Nunu & Willump
+    2: { TOP: 0.7, JUNGLE: 0.3 },                     // Olaf
+    61: { MID: 1.0 },                                  // Orianna
+    516: { TOP: 1.0 },                                  // Ornn
+    80: { SUPPORT: 0.5, JUNGLE: 0.3, TOP: 0.25 },       // Pantheon
+    78: { TOP: 0.5, JUNGLE: 0.5, SUPPORT: 0.2 },         // Poppy
+    555: { SUPPORT: 0.5 },                               // Pyke
+    246: { MID: 0.6, JUNGLE: 0.4 },                     // Qiyana
+    133: { TOP: 0.7, SUPPORT: 0.03 },                    // Quinn
+    497: { SUPPORT: 1.0 },                              // Rakan
+    33: { JUNGLE: 1.0 },                               // Rammus
+    421: { JUNGLE: 1.0 },                               // Rek'Sai
+    526: { SUPPORT: 1.0 },                              // Rell
+    888: { SUPPORT: 1.0 },                              // Renata Glasc
+    58: { TOP: 1.0 },                                  // Renekton
+    107: { JUNGLE: 1.0 },                               // Rengar
+    92: { TOP: 1.0 },                                  // Riven
+    68: { TOP: 0.9, MID: 0.4 },                        // Rumble
+    13: { MID: 0.8, TOP: 0.3 },                        // Ryze
+    360: { ADC: 1.0 },                                  // Samira
+    113: { JUNGLE: 1.0 },                               // Sejuani
+    235: { SUPPORT: 0.7, ADC: 0.2 },                    // Senna
+    147: { SUPPORT: 0.8 },                             // Seraphine
+    875: { TOP: 1.0 },                                  // Sett
+    35: { JUNGLE: 0.8, SUPPORT: 0.2 },                 // Shaco
+    98: { TOP: 1.0, SUPPORT: 0.4, JUNGLE: 0.2 },        // Shen
+    102: { JUNGLE: 0.8, TOP: 0.2 },                     // Shyvana
+    27: { TOP: 1.0 },                                  // Singed
+    14: { TOP: 0.7, SUPPORT: 0.2 },                    // Sion
+    15: { ADC: 1.0 },                                  // Sivir
+    901: { JUNGLE: 1.0 },                               // Skarner
+    903: { ADC: 1.0 },                                  // Smolder
+    37: { SUPPORT: 1.0 },                              // Sona
+    16: { SUPPORT: 1.0 },                              // Soraka
+    50: { MID: 0.2, SUPPORT: 0.5 },                        // Swain
+    517: { MID: 0.7, TOP: 0.1 },                        // Sylas
+    134: { MID: 1.0 },                                  // Syndra
+    223: { TOP: 0.5, SUPPORT: 0.5 },                    // Tahm Kench
+    163: { JUNGLE: 0.5, MID: 0.5 },                     // Taliyah
+    91: { MID: 1.0 },                                  // Talon
+    44: { SUPPORT: 1.0 },                              // Taric
+    17: { TOP: 0.75, SUPPORT: 0.2 },                    // Teemo
+    412: { SUPPORT: 1.0 },                              // Thresh
+    18: { ADC: 1.0 },                                  // Tristana
+    48: { TOP: 0.6, JUNGLE: 0.4 },                     // Trundle
+    23: { TOP: 1.0 },                                  // Tryndamere
+    4: { MID: 0.5, TOP: 0.3, ADC: 0.2 },              // Twisted Fate
+    29: { ADC: 0.6 },                                   // Twitch
+    77: { JUNGLE: 0.6, TOP: 0.4 },                     // Udyr
+    6: { TOP: 1.0 },                                  // Urgot
+    110: { ADC: 0.9, MID: 0.1, TOP: 0.1 },               // Varus
+    67: { ADC: 1.0, TOP: 0.25 },                         // Vayne
+    45: { MID: 0.7, SUPPORT: 0.05 },                    // Veigar
+    161: { MID: 0.6, SUPPORT: 0.4 },                    // Vel'Koz
+    711: { MID: 1.0 },                                  // Vex
+    254: { JUNGLE: 1.0 },                               // Vi
+    234: { JUNGLE: 1.0 },                               // Viego
+    112: { MID: 1.0 },                                  // Viktor
+    8: { MID: 0.5, TOP: 0.5 },                        // Vladimir
+    106: { TOP: 0.6, JUNGLE: 0.4 },                     // Volibear
+    19: { JUNGLE: 0.8, TOP: 0.2 },                     // Warwick
+    62: { TOP: 0.6, JUNGLE: 0.4 },                     // Wukong
+    498: { ADC: 1.0 },                                  // Xayah
+    101: { MID: 1.0, SUPPORT: 0.2 },                   // Xerath
+    5: { JUNGLE: 1.0 },                               // Xin Zhao
+    157: { TOP: 0.5, MID: 0.5 },                        // Yasuo
+    777: { MID: 0.5, TOP: 0.5 },                        // Yone
+    83: { TOP: 0.7, JUNGLE: 0.3 },                     // Yorick
+    350: { SUPPORT: 1.0 },                              // Yuumi
+    154: { JUNGLE: 1.0 },                               // Zac
+    238: { MID: 0.7, JUNGLE: 0.3 },                     // Zed
+    221: { ADC: 1.0 },                                  // Zeri
+    115: { MID: 0.7, ADC: 0.3 },                        // Ziggs
+    26: { SUPPORT: 0.7, MID: 0.3 },                    // Zilean
+    142: { MID: 1.0 },                                  // Zoe
+    143: { SUPPORT: 0.6, MID: 0.4 },                    // Zyra
+    804: { ADC: 1.0 },                                  // Yunara
+    799: { TOP: 0.8 },                                   // Ambessa
+    904: { TOP: 0.8 },                                   // Zaahen
+};
 
-// ─── Détection du rôle via les sorts d'invocateur + champion ─────────────────
-/**
- * Fiabilité estimée :
- *  - JUNGLE  → 100% (smite exclusif)
- *  - SUPPORT → ~85% (exhaust/barrier très liés au support)
- *  - ADC     → ~80% (heal + champion ADC connu)
- *  - TOP     → ~65% (téléport + pas heal + pas smite)
- *  - MID     → ~55% (ignite sans heal, par élimination)
- *  - NONE    → cas bizarres restants
- */
-function getRoleFromSpells(spell1Id, spell2Id, championId) {
-    const spells = [spell1Id, spell2Id];
-
-    // ── Jungle ────────────────────────────────────────────────────────────────
-    // Smite est exclusif au jungle, aucune ambiguïté possible
-    if (spells.includes(SMITE)) return "JUNGLE";
-
-    // ── Champion ADC connu → priorité absolue avant toute détection par spell ─
-    // Jhin/Caitlyn/Jinx avec Exhaust ou Barrier jouent ADC, pas Support
-    // On vérifie le champion EN PREMIER pour éviter les faux positifs
-    if (championId && ADC_ONLY_CHAMPIONS.has(championId)) return "ADC";
-
-    // ── Support (exhaust ou barrier) ──────────────────────────────────────────
-    // On arrive ici uniquement si le champion n'est PAS un ADC identifié
-    if (spells.includes(EXHAUST) || spells.includes(BARRIER)) return "SUPPORT";
-
-    // ── ADC / Support avec Heal ───────────────────────────────────────────────
-    if (spells.includes(HEAL)) {
-        // Champion identifié comme support → SUPPORT
-        if (championId && SUPPORT_ONLY_CHAMPIONS.has(championId)) return "SUPPORT";
-        // Heal sans info champion précise → probablement ADC
-        return "ADC";
+// ─── Génération des permutations (5! = 120) ───────────────────────────────────
+function getPermutations(arr) {
+    if (arr.length <= 1) return [arr];
+    const result = [];
+    for (let i = 0; i < arr.length; i++) {
+        const rest = [...arr.slice(0, i), ...arr.slice(i + 1)];
+        for (const perm of getPermutations(rest)) {
+            result.push([arr[i], ...perm]);
+        }
     }
-
-    // ── Téléport → Top dans la grande majorité des cas ───────────────────────
-    if (spells.includes(TELEPORT)) {
-        // TP + Ignite → Mid possible (Twisted Fate, Corki...) mais Top reste majoritaire
-        if (spells.includes(IGNITE)) return "MID";
-        return "TOP";
-    }
-
-    // ── Ignite sans Heal/Exhaust/TP → Mid ou Top ─────────────────────────────
-    // Flash + Ignite est commun Mid. Ghost + Ignite aussi.
-    if (spells.includes(IGNITE)) {
-        // Support avec ignite possible mais rare → on préfère SUPPORT quand même
-        if (championId && SUPPORT_ONLY_CHAMPIONS.has(championId)) return "SUPPORT";
-        return "MID";
-    }
-
-    // ── Ghost → souvent Top (Darius, Garen, Mordekaiser…) ────────────────────
-    if (spells.includes(GHOST)) return "TOP";
-
-    // ── Cleanse → souvent ADC (Vayne, Jinx...) ou Mid en cas de CC lourd ─────
-    if (spells.includes(CLEANSE)) {
-        if (championId && ADC_ONLY_CHAMPIONS.has(championId)) return "ADC";
-        return "MID";
-    }
-
-    return "NONE";
+    return result;
 }
 
+// Pré-calcul unique des 120 permutations de rôles (constant, calculé une seule fois)
+const ROLE_PERMUTATIONS = getPermutations(ROLES);
+
+// ─── Calcul du score d'un joueur pour un rôle donné ──────────────────────────
+// Combine le score champion ET le bonus summoner spell (Smite)
+function getRoleScore(participant, role) {
+    const champScores = CHAMPION_ROLES[participant.championId] ?? {};
+    let score = champScores[role] ?? 0.05;
+
+    const hasSmite =
+        participant.spell1Id === SMITE_SPELL_ID ||
+        participant.spell2Id === SMITE_SPELL_ID;
+
+    if (hasSmite) {
+        // Smite est un signal certain de JUNGLE
+        // On booste très fortement ce rôle et on pénalise les autres
+        // pour ce joueur, sans totalement écraser le score champion
+        if (role === "JUNGLE") {
+            score = Math.max(score, 1);
+        } else {
+            score = score * 0.01; // fortement pénalisé sur les autres rôles
+        }
+    }
+
+    return score;
+}
+
+// ─── Assignation optimale des rôles pour une équipe (5 joueurs) ──────────────
+// Recherche exhaustive sur les 120 permutations possibles → garantit l'optimum
+// global (contrairement à l'ancien algorithme glouton qui pouvait être sous-optimal
+// quand plusieurs champions se disputaient le même rôle fort).
+function assignRolesForTeam(participants) {
+    if (participants.length !== 5) {
+        // Cas limite (ex: partie custom à effectif réduit) → fallback simple
+        const assignments = {};
+        const usedRoles = new Set();
+        for (const p of participants) {
+            const best = ROLES
+                .filter((r) => !usedRoles.has(r))
+                .sort((a, b) => getRoleScore(p, b) - getRoleScore(p, a))[0];
+            if (best) {
+                assignments[p.puuid] = best;
+                usedRoles.add(best);
+            }
+        }
+        return assignments;
+    }
+
+    let bestPermutation = null;
+    let bestScore = -Infinity;
+
+    for (const perm of ROLE_PERMUTATIONS) {
+        let score = 0;
+        for (let i = 0; i < participants.length; i++) {
+            score += getRoleScore(participants[i], perm[i]);
+        }
+        if (score > bestScore) {
+            bestScore = score;
+            bestPermutation = perm;
+        }
+    }
+
+    const assignments = {};
+    participants.forEach((p, i) => {
+        assignments[p.puuid] = bestPermutation[i];
+    });
+
+    return assignments;
+}
+
+function assignRolesForGame(participants) {
+    const team1 = participants.filter((p) => p.teamId === 100);
+    const team2 = participants.filter((p) => p.teamId === 200);
+
+    return {
+        ...assignRolesForTeam(team1),
+        ...assignRolesForTeam(team2),
+    };
+}
 
 // ─── Formatage durée ──────────────────────────────────────────────────────────
 function formatDuration(seconds) {
@@ -149,7 +302,6 @@ function formatDuration(seconds) {
 const ingameCache = new Map();
 const INGAME_CACHE_TTL = 30_000; // 30 secondes
 
-// Nettoyage périodique du cache pour éviter les fuites mémoire
 setInterval(() => {
     const now = Date.now();
     for (const [key, val] of ingameCache.entries()) {
@@ -162,7 +314,6 @@ setInterval(() => {
 async function getActiveGameCached(puuid) {
     const cached = ingameCache.get(puuid);
     if (cached && Date.now() - cached.timestamp < INGAME_CACHE_TTL) {
-        //logger.debug("INGAME", `Cache hit pour ${puuid.substring(0, 8)}...`);
         return cached.data;
     }
     const data = await getActiveGame(puuid);
@@ -180,7 +331,37 @@ function withTimeout(promise, ms, label) {
     ]);
 }
 
-// ─── Stats récentes + série depuis la BDD (1 seule requête) ──────────────────
+// ─── Traitement par batch pour paralléliser sans spam l'API ─────────────────
+async function processBatch(players, batchSize = 3, delayMs = 200) {
+    const results = [];
+
+    for (let i = 0; i < players.length; i += batchSize) {
+        const batch = players.slice(i, i + batchSize);
+
+        const batchResults = await Promise.allSettled(
+            batch.map((p) =>
+                withTimeout(getActiveGameCached(p.puuid), 5_000, p.riot_id)
+            )
+        );
+
+        batchResults.forEach((result, idx) => {
+            const player = batch[idx];
+            if (result.status === "fulfilled") {
+                results.push({ status: "fulfilled", value: { player, gameData: result.value } });
+            } else {
+                results.push({ status: "rejected", player, reason: result.reason });
+            }
+        });
+
+        if (i + batchSize < players.length) {
+            await new Promise((r) => setTimeout(r, delayMs));
+        }
+    }
+
+    return results;
+}
+
+// ─── Stats récentes + série depuis la BDD ────────────────────────────────────
 function getPlayerRecentStats(playerId) {
     const matches = global.db.prepare(`
         SELECT win FROM match_history
@@ -191,12 +372,10 @@ function getPlayerRecentStats(playerId) {
 
     if (!matches.length) return { wrLine: null, streakLine: null };
 
-    // ── Winrate ───────────────────────────────────────────────────────────────
     const total = matches.length;
     const wins = matches.filter((m) => m.win).length;
     const wrLine = `📊 **${Math.round((wins / total) * 100)}%** WR · ${wins}W ${total - wins}L`;
 
-    // ── Série en cours ────────────────────────────────────────────────────────
     let streakLine = null;
     if (matches.length >= 2) {
         const first = matches[0].win;
@@ -243,53 +422,27 @@ module.exports = {
             players: players.map((p) => p.riot_id),
         });
 
-        // Message intermédiaire seulement si beaucoup de joueurs
         if (players.length > 4) {
             await interaction.editReply(
                 `🔍 Vérification de ${players.length} joueur(s) en cours...`
             );
         }
 
-        // ── Appels API séquentiels avec délai + cache + timeout ───────────────
-        const results = [];
+        // ── Appels API en parallèle par batch (plus rapide que le séquentiel) ─
+        const results = await processBatch(players, 3, 200);
 
-        for (const player of players) {
-            // logger.debug("INGAME", `Vérification de ${player.riot_id}`, {
-            //     puuid: player.puuid?.substring(0, 8) + "...",
-            // });
-
-            try {
-                const gameData = await withTimeout(
-                    getActiveGameCached(player.puuid),
-                    5_000,
-                    player.riot_id
-                );
-
-                // logger.debug("INGAME", `Résultat pour ${player.riot_id}`, {
-                //     inGame: gameData !== null,
-                //     queueId: gameData?.gameQueueConfigId ?? "N/A",
-                //     gameId: gameData?.gameId ?? "N/A",
-                //     gameLength: gameData?.gameLength ?? "N/A",
-                //     participantsCount: gameData?.participants?.length ?? 0,
-                // });
-
-                results.push({ status: "fulfilled", value: { player, gameData } });
-            } catch (err) {
-                logger.error("INGAME", `Erreur API pour ${player.riot_id}`, {
-                    status: err.response?.status,
-                    message: err.message,
-                });
-                results.push({ status: "rejected", reason: err });
-            }
-
-            // Délai entre chaque appel pour ménager le quota
-            await new Promise((r) => setTimeout(r, 150));
-        }
-
-        // ── Diagnostic avant filtre ───────────────────────────────────────────
         const fulfilled = results.filter((r) => r.status === "fulfilled");
         const withGame = fulfilled.filter((r) => r.value.gameData !== null);
         const rejected = results.filter((r) => r.status === "rejected");
+
+        if (rejected.length > 0) {
+            for (const r of rejected) {
+                logger.error("INGAME", `Erreur API pour ${r.player.riot_id}`, {
+                    status: r.reason?.response?.status,
+                    message: r.reason?.message,
+                });
+            }
+        }
 
         logger.info("INGAME", `Résultats bruts`, {
             total: results.length,
@@ -310,7 +463,6 @@ module.exports = {
             players: inGame.map((g) => g.player.riot_id),
         });
 
-        // ── Aucun joueur en game ──────────────────────────────────────────────
         if (!inGame.length) {
             const embed = new EmbedBuilder()
                 .setTitle("🎮 Joueurs en partie")
@@ -344,15 +496,12 @@ module.exports = {
                 continue;
             }
 
-            // logger.debug("INGAME", `Spells de ${player.riot_id}`, {
-            //     spell1Id: participant.spell1Id,
-            //     spell2Id: participant.spell2Id,
-            //     championId: participant.championId,
-            // });
-
-            const role = getRoleFromSpells(participant.spell1Id, participant.spell2Id, participant.championId);
+            // Matching optimal (permutations) + bonus Smite = bien plus fiable
+            const roleAssignments = assignRolesForGame(gameData.participants);
+            const role = roleAssignments[participant.puuid] ?? "NONE";
             const roleEmoji = ROLE_EMOJIS[role] ?? ROLE_EMOJIS["NONE"];
             const roleLabel = role !== "NONE" ? role : "Inconnu";
+
             const queueName = QUEUE_NAMES[gameData.gameQueueConfigId] ?? `Queue ${gameData.gameQueueConfigId}`;
             const championName = getChampionName(participant.championId);
             const rankEmoji = getRankEmoji(player.last_rank);
@@ -367,7 +516,6 @@ module.exports = {
 
             const { wrLine, streakLine } = getPlayerRecentStats(player.id);
 
-            // ── Assemblage du field ───────────────────────────────────────────
             const lines = [
                 `🔗 [Voir sur DPM](${dpmUrl})`,
                 `${rankEmoji} **${player.last_rank ?? "Non classé"}** (${player.last_lp ?? 0} LP)`,
@@ -383,7 +531,6 @@ module.exports = {
                 inline: false,
             });
 
-            // ── Séparateur visuel entre chaque joueur (sauf le dernier) ──────
             if (i < inGame.length - 1) {
                 fields.push({
                     name: "─────────────────────",
@@ -396,14 +543,9 @@ module.exports = {
                 queue: queueName,
                 champion: championName,
                 role: roleLabel,
-                spell1Id: participant.spell1Id,
-                spell2Id: participant.spell2Id,
                 duration: durationLabel,
             });
         }
-
-
-        // ── Padding supprimé — inutile sans inline ────────────────────────────
 
         const embed = new EmbedBuilder()
             .setTitle("🎮 Joueurs actuellement en partie")
@@ -415,56 +557,5 @@ module.exports = {
             });
 
         await interaction.editReply({ content: null, embeds: [embed] });
-
     },
 };
-
-// ─── Champion ID → Nom ────────────────────────────────────────────────────────
-function getChampionName(championId) {
-    const CHAMPION_NAMES = {
-        266: "Aatrox", 103: "Ahri", 84: "Akali", 166: "Akshan",
-        12: "Alistar", 799: "Ambessa", 32: "Amumu", 34: "Anivia",
-        1: "Annie", 523: "Aphelios", 22: "Ashe", 136: "Aurelion Sol",
-        893: "Aurora", 268: "Azir", 432: "Bard", 200: "Bel'Veth",
-        53: "Blitzcrank", 63: "Brand", 201: "Braum", 233: "Briar",
-        51: "Caitlyn", 164: "Camille", 69: "Cassiopeia", 31: "Cho'Gath",
-        42: "Corki", 122: "Darius", 131: "Diana", 36: "Dr. Mundo",
-        119: "Draven", 245: "Ekko", 60: "Elise", 28: "Evelynn",
-        81: "Ezreal", 9: "Fiddlesticks", 114: "Fiora", 105: "Fizz",
-        3: "Galio", 41: "Gangplank", 86: "Garen", 150: "Gnar",
-        79: "Gragas", 104: "Graves", 887: "Gwen", 120: "Hecarim",
-        74: "Heimerdinger", 910: "Hwei", 420: "Illaoi", 39: "Irelia",
-        427: "Ivern", 40: "Janna", 59: "Jarvan IV", 24: "Jax",
-        126: "Jayce", 202: "Jhin", 222: "Jinx", 145: "Kai'Sa",
-        429: "Kalista", 43: "Karma", 30: "Karthus", 38: "Kassadin",
-        55: "Katarina", 10: "Kayle", 141: "Kayn", 85: "Kennen",
-        121: "Kha'Zix", 203: "Kindred", 240: "Kled", 96: "Kog'Maw",
-        897: "K'Sante", 7: "LeBlanc", 64: "Lee Sin", 89: "Leona",
-        876: "Lillia", 127: "Lissandra", 236: "Lucian", 117: "Lulu",
-        99: "Lux", 54: "Malphite", 90: "Malzahar", 57: "Maokai",
-        11: "Master Yi", 902: "Milio", 21: "Miss Fortune", 82: "Mordekaiser",
-        25: "Morgana", 950: "Naafiri", 267: "Nami", 75: "Nasus",
-        111: "Nautilus", 518: "Neeko", 76: "Nidalee", 895: "Nilah",
-        56: "Nocturne", 20: "Nunu & Willump", 2: "Olaf", 61: "Orianna",
-        516: "Ornn", 80: "Pantheon", 78: "Poppy", 555: "Pyke",
-        246: "Qiyana", 133: "Quinn", 497: "Rakan", 33: "Rammus",
-        421: "Rek'Sai", 526: "Rell", 888: "Renata Glasc", 58: "Renekton",
-        107: "Rengar", 92: "Riven", 68: "Rumble", 13: "Ryze",
-        360: "Samira", 113: "Sejuani", 235: "Senna", 147: "Seraphine",
-        875: "Sett", 35: "Shaco", 98: "Shen", 102: "Shyvana",
-        27: "Singed", 14: "Sion", 15: "Sivir", 901: "Skarner",
-        903: "Smolder", 37: "Sona", 16: "Soraka", 50: "Swain",
-        517: "Sylas", 134: "Syndra", 223: "Tahm Kench", 163: "Taliyah",
-        91: "Talon", 44: "Taric", 17: "Teemo", 412: "Thresh",
-        18: "Tristana", 48: "Trundle", 23: "Tryndamere", 4: "Twisted Fate",
-        29: "Twitch", 77: "Udyr", 6: "Urgot", 110: "Varus",
-        67: "Vayne", 45: "Veigar", 161: "Vel'Koz", 711: "Vex",
-        254: "Vi", 234: "Viego", 112: "Viktor", 8: "Vladimir",
-        106: "Volibear", 19: "Warwick", 62: "Wukong", 498: "Xayah",
-        101: "Xerath", 5: "Xin Zhao", 157: "Yasuo", 777: "Yone",
-        83: "Yorick", 350: "Yuumi", 154: "Zac", 238: "Zed",
-        221: "Zeri", 115: "Ziggs", 26: "Zilean", 142: "Zoe",
-        143: "Zyra", 804: "Yunara", 904: "Zaahen",
-    };
-    return CHAMPION_NAMES[championId] ?? `Champion#${championId}`;
-}
