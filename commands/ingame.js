@@ -45,7 +45,7 @@ const CHAMPION_ROLES = {
     201: { SUPPORT: 1.0 },                              // Braum
     233: { JUNGLE: 0.9, TOP: 0.1 },                     // Briar
     51: { ADC: 1.0 },                                  // Caitlyn
-    164: { TOP: 1.0, SUPPORT: 0.2 },                   // Camille
+    164: { TOP: 1.0, SUPPORT: 0.3 },                   // Camille
     69: { MID: 0.9, TOP: 0.1 },                        // Cassiopeia
     31: { TOP: 0.6, JUNGLE: 0.4 },                     // Cho'Gath
     42: { MID: 0.1, ADC: 0.7 },                        // Corki
@@ -101,7 +101,7 @@ const CHAMPION_ROLES = {
     236: { ADC: 1.0 },                                  // Lucian
     117: { SUPPORT: 1.0 },                              // Lulu
     99: { MID: 0.6, SUPPORT: 0.4 },                    // Lux
-    54: { TOP: 0.7, SUPPORT: 0.3 },                    // Malphite
+    54: { TOP: 0.7, SUPPORT: 0.1 },                    // Malphite
     90: { MID: 0.8 },                                // Malzahar
     57: { SUPPORT: 0.5, JUNGLE: 0.3, TOP: 0.2 },       // Maokai
     11: { JUNGLE: 0.8, TOP: 0.1, MID: 0.1 },            // Master Yi
@@ -147,7 +147,7 @@ const CHAMPION_ROLES = {
     27: { TOP: 1.0 },                                  // Singed
     14: { TOP: 0.7, SUPPORT: 0.2 },                    // Sion
     15: { ADC: 1.0 },                                  // Sivir
-    901: { JUNGLE: 1.0 },                               // Skarner
+    72: { JUNGLE: 1.0 },                               // Skarner
     903: { ADC: 1.0 },                                  // Smolder
     37: { SUPPORT: 1.0 },                              // Sona
     16: { SUPPORT: 1.0 },                              // Soraka

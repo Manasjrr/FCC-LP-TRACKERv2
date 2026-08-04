@@ -31,7 +31,7 @@ const CHAMPION_NAMES = {
     107: "Rengar", 92: "Riven", 68: "Rumble", 13: "Ryze",
     360: "Samira", 113: "Sejuani", 235: "Senna", 147: "Seraphine",
     875: "Sett", 35: "Shaco", 98: "Shen", 102: "Shyvana",
-    27: "Singed", 14: "Sion", 15: "Sivir", 901: "Skarner",
+    27: "Singed", 14: "Sion", 15: "Sivir", 72: "Skarner",
     903: "Smolder", 37: "Sona", 16: "Soraka", 50: "Swain",
     517: "Sylas", 134: "Syndra", 223: "Tahm Kench", 163: "Taliyah",
     91: "Talon", 44: "Taric", 17: "Teemo", 412: "Thresh",
