@@ -18,25 +18,25 @@ const CACHE_DURATION = 10 * 60 * 1000;
 const MASTERY_CACHE_DURATION = 30 * 60 * 1000;
 const CACHE_CLEANUP_INTERVAL = 15 * 60 * 1000;
 
-let cachedPatchVersion = "15.10.1";
+// let cachedPatchVersion = "15.10.1";
 
-async function fetchLatestPatchVersion() {
-    try {
-        const res = await axios.get(
-            "https://ddragon.leagueoflegends.com/api/versions.json",
-            { timeout: 5_000 }
-        );
-        cachedPatchVersion = res.data[0];
-        logger.info('PATCH', `Version DDragon mise à jour : ${cachedPatchVersion}`);
-    } catch (error) {
-        logger.warn('PATCH', `Impossible de récupérer la version DDragon, fallback : ${cachedPatchVersion}`, {
-            error: error.message
-        });
-    }
-}
+// async function fetchLatestPatchVersion() {
+//     try {
+//         const res = await axios.get(
+//             "https://ddragon.leagueoflegends.com/api/versions.json",
+//             { timeout: 5_000 }
+//         );
+//         cachedPatchVersion = res.data[0];
+//         logger.info('PATCH', `Version DDragon mise à jour : ${cachedPatchVersion}`);
+//     } catch (error) {
+//         logger.warn('PATCH', `Impossible de récupérer la version DDragon, fallback : ${cachedPatchVersion}`, {
+//             error: error.message
+//         });
+//     }
+// }
 
-fetchLatestPatchVersion();
-setInterval(fetchLatestPatchVersion, 24 * 60 * 60 * 1000);
+// fetchLatestPatchVersion();
+// setInterval(fetchLatestPatchVersion, 24 * 60 * 60 * 1000);
 
 // ─────────────────────────────────────────
 //  HELPER — URL ICÔNE DE PROFIL

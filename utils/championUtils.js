@@ -58,4 +58,9 @@ function getChampionIdByName(championName) {
     return CHAMPION_IDS[championName] ?? null;
 }
 
-module.exports = { getChampionName, getChampionIdByName, CHAMPION_NAMES, CHAMPION_IDS };
+function getChampionIconUrl(championName, patchVersion) {
+    if (!championName) return null;
+    return `https://ddragon.leagueoflegends.com/cdn/${patchVersion}/img/champion/${championName}.png`;
+}
+
+module.exports = { getChampionName, getChampionIdByName, getChampionIconUrl, CHAMPION_NAMES, CHAMPION_IDS };

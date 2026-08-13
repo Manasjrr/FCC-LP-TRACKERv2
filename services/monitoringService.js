@@ -6,6 +6,23 @@ const { buildMatchNotifEmbed } = require("../embeds/matchEmbed");
 const matchCache = require("../cache/matchCache");
 const logger = require("../utils/loggers");
 
+
+let patchVersion = "15.10.1"; // fallback
+
+async function updatePatchVersion() {
+    try {
+        const axios = require("axios");
+        const res = await axios.get("https://ddragon.leagueoflegends.com/api/versions.json", { timeout: 5000 });
+        patchVersion = res.data[0];
+        logger.info("MONITOR", `Version patch mise à jour : ${patchVersion}`);
+    } catch (err) {
+        logger.warn("MONITOR", `Échec mise à jour patch, fallback : ${patchVersion}`);
+    }
+}
+
+updatePatchVersion();
+setInterval(updatePatchVersion, 24 * 60 * 60 * 1000);
+
 // ─── Notification changement de rang ─────────────────────────────────────────
 async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP, channel) {
     const oldRankData = getRankOrder(oldRank, oldLP);
@@ -59,7 +76,7 @@ async function checkPlayerNewMatches(player, guildEntries, client) {
         if (!result?.isRecent) continue;
 
         matchCache.setMatch(matchId, result.match.info);
-        fetchAndCacheTimeline(matchId).catch(() => {});
+        fetchAndCacheTimeline(matchId).catch(() => { });
 
         // ── Notifier sur TOUS les serveurs où le joueur est actif ────────────
         for (const guildEntry of guildEntries) {
@@ -79,7 +96,8 @@ async function checkPlayerNewMatches(player, guildEntries, client) {
                 result.currentRank,
                 result.currentLP,
                 result.finalLpChange,
-                matchId
+                matchId,
+                patchVersion
             );
 
             await channel.send({ embeds: [embed], components: [row] });

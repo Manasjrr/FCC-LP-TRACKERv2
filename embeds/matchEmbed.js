@@ -1,9 +1,19 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { getRankEmoji } = require("../utils/rankUtils");
+const { getChampionIconUrl } = require("../utils/championUtils");
 
-// ─── Embed notification match (victoire/défaite) ──────────────────────────────
-function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP, finalLpChange, matchId) {
-    // supprime le console.log
+// ─── Détection multi-kill ──────────────────────────────────────────────────
+function getMultiKillText(participant) {
+    if (participant.pentaKills > 0) {
+        return `🔥 **PENTAKILL x${participant.pentaKills}** 🔥`;
+    }
+    if (participant.quadraKills > 0) {
+        return `⚡ **QUADRA KILL x${participant.quadraKills}**`;
+    }
+    return null;
+}
+
+function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP, finalLpChange, matchId, patchVersion) {
     const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
     const clickablePlayerName = `[**${player.riot_id}**](https://dpm.lol/${riotIdFormatted})`;
     const lpChangeText = finalLpChange >= 0 ? `+${finalLpChange} LP` : `${finalLpChange} LP`;
@@ -12,10 +22,16 @@ function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP
         ? `\n🏆 **${oldRank}** → **${currentRank}**`
         : "";
 
+    const multiKillText = getMultiKillText(participant);
+
     const embed = new EmbedBuilder()
         .setTitle(participant.win ? "🟢 VICTOIRE" : "🔴 DÉFAITE")
-        .setDescription(`${clickablePlayerName} vient de finir une partie !`)
+        .setDescription(
+            `${clickablePlayerName} vient de finir une partie !` +
+            (multiKillText ? `\n${multiKillText}` : "")
+        )
         .setColor(participant.win ? 0x00ff00 : 0xff0000)
+        .setThumbnail(getChampionIconUrl(participant.championName, patchVersion))
         .addFields(
             {
                 name: "🎯 Performance",
@@ -34,18 +50,17 @@ function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP
             }
         )
         .setTimestamp()
-        .setFooter({ text: `Match ID: ${matchId}` }); 
+        .setFooter({ text: `Match ID: ${matchId}` });
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId(`stats|${matchId}|${player.puuid}`) 
+            .setCustomId(`stats|${matchId}|${player.puuid}`)
             .setLabel("📊 Stats détaillées")
             .setStyle(ButtonStyle.Secondary)
     );
 
     return { embed, row };
 }
-
 
 // ─── Embed changement de rang ─────────────────────────────────────────────────
 function buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP) {
