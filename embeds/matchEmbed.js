@@ -13,7 +13,15 @@ function getMultiKillText(participant) {
     return null;
 }
 
-function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP, finalLpChange, matchId, patchVersion) {
+function getPositionChangeText(positionBefore, positionAfter) {
+    if (!positionBefore || !positionAfter || positionBefore.total === 0) return null;
+    if (positionBefore.position === positionAfter.position) return null;
+
+    const arrow = positionAfter.position < positionBefore.position ? "🟢⬆️" : "🔴⬇️";
+    return `${arrow} #${positionAfter.position}/${positionAfter.total}`;
+}
+
+function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP, finalLpChange, matchId, patchVersion, positionBefore, positionAfter) {
     const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
     const clickablePlayerName = `[**${player.riot_id}**](https://dpm.lol/${riotIdFormatted})`;
     const lpChangeText = finalLpChange >= 0 ? `+${finalLpChange} LP` : `${finalLpChange} LP`;
@@ -23,6 +31,8 @@ function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP
         : "";
 
     const multiKillText = getMultiKillText(participant);
+
+    const positionText = getPositionChangeText(positionBefore, positionAfter);
 
     const embed = new EmbedBuilder()
         .setTitle(participant.win ? "🟢 VICTOIRE" : "🔴 DÉFAITE")
@@ -48,9 +58,17 @@ function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP
                 value: `${Math.floor(match.gameDuration / 60)}min`,
                 inline: true,
             }
-        )
-        .setTimestamp()
-        .setFooter({ text: `Match ID: ${matchId}` });
+        );
+
+    if (positionText) {
+        embed.addFields({
+            name: "🏅 Classement serveur",
+            value: positionText,
+            inline: true,
+        });
+    }
+
+    embed.setTimestamp().setFooter({ text: `Match ID: ${matchId}` });
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()

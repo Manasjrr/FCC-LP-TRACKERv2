@@ -64,13 +64,20 @@ async function checkPlayerNewMatches(player, guildEntries, client) {
         matches: newMatchIds,
     });
 
+
+
     let currentPlayer = player;
 
     for (const [index, matchId] of newMatchIds.entries()) {
         const isLatest = index === newMatchIds.length - 1;
-        const result = await processNewMatch(currentPlayer, matchId, isLatest);
 
-        // Rafraîchir le joueur depuis la BDD
+        // Position AVANT le match, par serveur
+        const positionsBefore = {};
+        for (const guildEntry of guildEntries) {
+            positionsBefore[guildEntry.guild_id] = getServerPosition(currentPlayer.riot_id, guildEntry.guild_id);
+        }
+
+        const result = await processNewMatch(currentPlayer, matchId, isLatest);
         currentPlayer = global.db.prepare(`SELECT * FROM players WHERE id = ?`).get(player.id);
 
         if (!result?.isRecent) continue;
@@ -78,16 +85,13 @@ async function checkPlayerNewMatches(player, guildEntries, client) {
         matchCache.setMatch(matchId, result.match.info);
         fetchAndCacheTimeline(matchId).catch(() => { });
 
-        // ── Notifier sur TOUS les serveurs où le joueur est actif ────────────
         for (const guildEntry of guildEntries) {
             const channel = await client.channels.fetch(guildEntry.channel_id).catch(() => null);
-            if (!channel) {
-                logger.warn("MONITOR", `Channel introuvable pour ${player.riot_id}`, {
-                    channelId: guildEntry.channel_id,
-                    guild: guildEntry.guild_id,
-                });
-                continue;
-            }
+            if (!channel) continue;
+
+            // Position APRÈS le match, pour ce même serveur
+            const positionAfter = getServerPosition(currentPlayer.riot_id, guildEntry.guild_id);
+            const positionBefore = positionsBefore[guildEntry.guild_id];
 
             const { embed, row } = buildMatchNotifEmbed(
                 currentPlayer,
@@ -97,7 +101,9 @@ async function checkPlayerNewMatches(player, guildEntries, client) {
                 result.currentLP,
                 result.finalLpChange,
                 matchId,
-                patchVersion
+                patchVersion,
+                positionBefore,
+                positionAfter
             );
 
             await channel.send({ embeds: [embed], components: [row] });
@@ -166,4 +172,25 @@ async function checkAllPlayers(client) {
     });
 }
 
-module.exports = { checkAllPlayers, sendRankChangeNotification };
+function getServerPosition(riotId, guildId) {
+    const rows = global.db.prepare(`
+        SELECT p.riot_id, p.last_rank, p.last_lp FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.guild_id = ? AND pg.active = 1
+    `).all(guildId);
+
+    if (!rows?.length) return { position: 0, total: 0 };
+
+    rows.sort((a, b) => {
+        const rA = getRankOrder(a.last_rank, a.last_lp);
+        const rB = getRankOrder(b.last_rank, b.last_lp);
+        if (rB.order !== rA.order) return rB.order - rA.order;
+        if (rB.divisionOrder !== rA.divisionOrder) return rB.divisionOrder - rA.divisionOrder;
+        return (rB.lp || 0) - (rA.lp || 0);
+    });
+
+    const position = rows.findIndex((p) => p.riot_id === riotId) + 1;
+    return { position, total: rows.length };
+}
+
+module.exports = { checkAllPlayers, sendRankChangeNotification, getServerPosition };
