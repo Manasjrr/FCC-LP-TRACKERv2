@@ -7,7 +7,7 @@ const logger = require("../utils/loggers");
 const PALETTE = {
     bg: '#0d0d0f',
     bgCard: '#111114',
-    gridLine: 'rgba(255,255,255,0.05)',
+    gridLine: 'rgba(255,255,255,0.10)',
     textMuted: 'rgba(255,255,255,0.35)',
     textDim: 'rgba(255,255,255,0.55)',
     win: '#22c55e',
@@ -30,8 +30,13 @@ const TIERS = [
 
 const DIVS = ['IV', 'III', 'II', 'I'];
 const PAD = { top: 56, right: 48, bottom: 72, left: 130 };
-const W = 600; // 1280
-const H = 300; //580
+const W = 600;
+const H = 300;
+
+const MIN_POINTS = 2;
+const BIG_SWING_LP = 20;
+const DEFAULT_QUALITY = 0.9;
+const DEFAULT_RENDER_SCALE = 3; // 2x = rendu "retina", texte/traits nets sur Discord
 
 // ─── HELPERS LP ─────────────────────────────────────────────────────────────
 
@@ -39,9 +44,13 @@ function rankToLP(rankStr, lp = 0) {
     if (!rankStr || rankStr === 'UNRANKED') return 0;
     const [tierRaw, divRaw] = rankStr.toLowerCase().split(' ');
     const tier = TIERS.find(t => t.name.toLowerCase() === tierRaw);
-    if (!tier) return 0;
+    if (!tier) {
+        logger.warn?.('GRAPH', `Rang inconnu ignoré: "${rankStr}"`);
+        return 0;
+    }
     const divIdx = DIVS.map(d => d.toLowerCase()).indexOf((divRaw || 'iv').toLowerCase());
-    return tier.base + Math.max(0, divIdx) * 100 + (lp % 100);
+    const safeLp = Math.max(0, Number(lp) || 0);
+    return tier.base + Math.max(0, divIdx) * 100 + (safeLp % 100);
 }
 
 function lpToLabel(lp) {
@@ -65,6 +74,7 @@ function getTierForLP(lp) {
 // ─── DB ─────────────────────────────────────────────────────────────────────
 
 function fetchHistory(playerId, limit) {
+    if (!global.db) throw new Error('global.db non initialisé');
     return global.db.prepare(
         `SELECT rank_after, lp_after, win, lp_change, game_creation
      FROM match_history WHERE player_id = ?
@@ -72,62 +82,33 @@ function fetchHistory(playerId, limit) {
     ).all(playerId, limit).reverse();
 }
 
+/**
+ * Calcule les bornes min/max LP sur TOUT l'historique du joueur (pas
+ * seulement les games affichées), pour garder un axe Y stable d'une
+ * génération de graphique à l'autre. Réutilise rankToLP au lieu de
+ * dupliquer la logique de tiers en SQL.
+ */
 function fetchAllTimeBounds(playerId) {
-    const row = global.db.prepare(`
-    SELECT
-      MIN(
-        CASE
-          WHEN LOWER(rank_after) LIKE '%iron%'        THEN 0
-          WHEN LOWER(rank_after) LIKE '%bronze%'      THEN 400
-          WHEN LOWER(rank_after) LIKE '%silver%'      THEN 800
-          WHEN LOWER(rank_after) LIKE '%gold%'        THEN 1200
-          WHEN LOWER(rank_after) LIKE '%platinum%'    THEN 1600
-          WHEN LOWER(rank_after) LIKE '%emerald%'     THEN 2000
-          WHEN LOWER(rank_after) LIKE '%diamond%'     THEN 2400
-          WHEN LOWER(rank_after) LIKE '%master%'      THEN 2800
-          WHEN LOWER(rank_after) LIKE '%grandmaster%' THEN 3200
-          WHEN LOWER(rank_after) LIKE '%challenger%'  THEN 3600
-          ELSE 0
-        END
-        + CASE
-          WHEN LOWER(rank_after) LIKE '% iv%'  THEN 0
-          WHEN LOWER(rank_after) LIKE '% iii%' THEN 100
-          WHEN LOWER(rank_after) LIKE '% ii%'  THEN 200
-          WHEN LOWER(rank_after) LIKE '% i%'   THEN 300
-          ELSE 0
-        END
-        + COALESCE(lp_after, 0)
-      ) AS min_lp,
-      MAX(
-        CASE
-          WHEN LOWER(rank_after) LIKE '%iron%'        THEN 0
-          WHEN LOWER(rank_after) LIKE '%bronze%'      THEN 400
-          WHEN LOWER(rank_after) LIKE '%silver%'      THEN 800
-          WHEN LOWER(rank_after) LIKE '%gold%'        THEN 1200
-          WHEN LOWER(rank_after) LIKE '%platinum%'    THEN 1600
-          WHEN LOWER(rank_after) LIKE '%emerald%'     THEN 2000
-          WHEN LOWER(rank_after) LIKE '%diamond%'     THEN 2400
-          WHEN LOWER(rank_after) LIKE '%master%'      THEN 2800
-          WHEN LOWER(rank_after) LIKE '%grandmaster%' THEN 3200
-          WHEN LOWER(rank_after) LIKE '%challenger%'  THEN 3600
-          ELSE 0
-        END
-        + CASE
-          WHEN LOWER(rank_after) LIKE '% iv%'  THEN 0
-          WHEN LOWER(rank_after) LIKE '% iii%' THEN 100
-          WHEN LOWER(rank_after) LIKE '% ii%'  THEN 200
-          WHEN LOWER(rank_after) LIKE '% i%'   THEN 300
-          ELSE 0
-        END
-        + COALESCE(lp_after, 0)
-      ) AS max_lp
-    FROM match_history
-    WHERE player_id = ?
-  `).get(playerId);
+    if (!global.db) return null;
+
+    const rows = global.db.prepare(
+        `SELECT rank_after, lp_after FROM match_history WHERE player_id = ?`
+    ).all(playerId);
+
+    if (!rows.length) return null;
+
+    let minLP = Infinity, maxLP = -Infinity;
+    for (const r of rows) {
+        const lp = rankToLP(r.rank_after, r.lp_after);
+        if (lp < minLP) minLP = lp;
+        if (lp > maxLP) maxLP = lp;
+    }
+
+    if (!Number.isFinite(minLP) || !Number.isFinite(maxLP)) return null;
 
     return {
-        minLP: Math.max(0, (row?.min_lp ?? 0) - 180),
-        maxLP: (row?.max_lp ?? 1200) + 180,
+        minLP: Math.max(0, minLP - 180),
+        maxLP: maxLP + 180,
     };
 }
 
@@ -165,25 +146,13 @@ function drawTierBands(ctx, minLP, maxLP, graphW, graphH) {
         if (bandBottom >= minLP && bandBottom <= maxLP) {
             const ySep = scaleY(bandBottom, minLP, maxLP, graphH);
             ctx.save();
-            ctx.strokeStyle = `rgba(${tier.bg},0.22)`;
-            ctx.lineWidth = 0.5;
+            ctx.strokeStyle = `rgba(${tier.bg},0.45)`;
+            ctx.lineWidth = 1;
             ctx.setLineDash([6, 6]);
             ctx.beginPath();
             ctx.moveTo(PAD.left, ySep);
             ctx.lineTo(PAD.left + graphW, ySep);
             ctx.stroke();
-            ctx.restore();
-        }
-
-        // Label du tier dans la bande (si assez de place)
-        const bandPx = y2 - y1;
-        if (bandPx > 20) {
-            ctx.save();
-            ctx.fillStyle = `rgba(${tier.bg},0.55)`;
-            ctx.font = `500 10px "Arial Narrow", Arial, sans-serif`;
-            ctx.letterSpacing = '0.08em';
-            ctx.textAlign = 'right';
-            ctx.fillText(tier.name.toUpperCase(), PAD.left - 10, (y1 + y2) / 2 + 4);
             ctx.restore();
         }
     });
@@ -192,7 +161,7 @@ function drawTierBands(ctx, minLP, maxLP, graphW, graphH) {
 function drawGridLines(ctx, minLP, maxLP, graphW, graphH) {
     // Lignes horizontales légères (toutes les 100 LP = une division)
     ctx.save();
-    ctx.lineWidth = 0.5;
+    ctx.lineWidth = 0.75;
     ctx.setLineDash([3, 8]);
     for (let lp = Math.ceil(minLP / 100) * 100; lp <= maxLP; lp += 100) {
         const y = scaleY(lp, minLP, maxLP, graphH);
@@ -222,12 +191,15 @@ function drawAxes(ctx, minLP, maxLP, graphW, graphH, pointCount) {
         });
     });
 
-    // Axe X — numéros de games
+    // Axe X — numéros de games (indices dédupliqués pour éviter les labels répétés)
     ctx.fillStyle = PALETTE.textMuted;
     ctx.textAlign = 'center';
-    const xSteps = Math.min(10, Math.ceil(pointCount / 20));
+    const xSteps = Math.min(10, Math.max(1, Math.ceil(pointCount / 20)));
+    const seen = new Set();
     for (let i = 0; i <= xSteps; i++) {
         const idx = Math.round((pointCount - 1) * i / xSteps);
+        if (seen.has(idx)) continue;
+        seen.add(idx);
         const x = PAD.left + (idx / (pointCount - 1)) * graphW;
         ctx.fillText(`G${idx + 1}`, x, H - PAD.bottom + 18);
     }
@@ -236,7 +208,7 @@ function drawAxes(ctx, minLP, maxLP, graphW, graphH, pointCount) {
 }
 
 function drawLine(ctx, points, minLP, maxLP, graphW, graphH) {
-    if (points.length < 2) return;
+    if (points.length < MIN_POINTS) return;
 
     // Ombre portée de la courbe
     ctx.save();
@@ -269,6 +241,61 @@ function drawLine(ctx, points, minLP, maxLP, graphW, graphH) {
     ctx.restore();
 }
 
+/**
+ * Ligne pointillée horizontale au niveau du meilleur LP atteint sur la
+ * fenêtre affichée, si ce pic est au-dessus du LP actuel.
+ */
+function drawPeakLine(ctx, points, minLP, maxLP, graphW, graphH) {
+    const current = points[points.length - 1];
+    const peak = points.reduce((a, b) => (b.lp > a.lp ? b : a), points[0]);
+    if (peak.lp <= current.lp) return null;
+
+    const y = scaleY(peak.lp, minLP, maxLP, graphH);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 4]);
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, y);
+    ctx.lineTo(PAD.left + graphW, y);
+    ctx.stroke();
+    ctx.restore();
+
+    // Petit label discret directement sur la ligne, côté gauche du graphe
+    // (là où il y a de la place, loin du bloc résumé en haut à droite)
+    ctx.save();
+    ctx.font = '600 9px Arial, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.textAlign = 'left';
+    ctx.fillText('PEAK', PAD.left + 6, y - 4);
+    ctx.restore();
+
+    return peak; // renvoyé pour être utilisé par drawPeakSummary
+}
+
+/**
+ * Affiche le détail du peak (rang + LP exacts) en haut à droite du
+ * graphique, juste en dessous du rang actuel affiché par drawStats.
+ */
+function drawPeakSummary(ctx, peak, graphW) {
+    if (!peak) return;
+
+    const tier = getTierForLP(peak.lp);
+    const lpInDivision = peak.lp - tier.base - (Math.floor((peak.lp - tier.base) / 100) * 100);
+    const label = tier.base >= 2800
+        ? `Peak ${tier.name} · ${peak.lp - tier.base} LP`
+        : `Peak ${lpToLabel(peak.lp)} · ${lpInDivision} LP`;
+
+    ctx.save();
+    ctx.font = '500 11px Arial, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.textAlign = 'right';
+    // Juste sous le rang actuel, qui est positionné à PAD.top - 14 dans drawStats
+    ctx.fillText(label, PAD.left + graphW, PAD.top + 2);
+    ctx.restore();
+}
+
 function drawPoints(ctx, points, minLP, maxLP, graphW, graphH) {
     const n = points.length;
     // Seuil adaptatif : moins de points si beaucoup de games
@@ -278,7 +305,7 @@ function drawPoints(ctx, points, minLP, maxLP, graphW, graphH) {
     points.forEach((p, i) => {
         const isFirst = i === 0;
         const isLast = i === n - 1;
-        const bigSwing = Math.abs(p.delta || 0) >= 20;
+        const bigSwing = Math.abs(p.delta || 0) >= BIG_SWING_LP;
         if (!isFirst && !isLast && i % step !== 0 && !bigSwing) return;
 
         const x = PAD.left + (i / (n - 1)) * graphW;
@@ -371,11 +398,45 @@ function drawStats(ctx, points, graphW) {
     ctx.fillText('HISTORIQUE ELO', PAD.left, PAD.top - 14);
 }
 
+// ─── ENCODAGE ───────────────────────────────────────────────────────────────
+
+/**
+ * Encode le canvas en JPEG. Tente canvas.toBuffer() (rapide, direct),
+ * et se rabat sur toDataURL() si toBuffer() n'est pas supporté par la
+ * version de node-canvas installée.
+ */
+function encodeJPEG(canvas, quality) {
+    try {
+        return canvas.toBuffer('image/jpeg', { quality });
+    } catch (err) {
+        logger.warn?.('GRAPH', 'canvas.toBuffer indisponible, fallback toDataURL', { err: err.message });
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+        return Buffer.from(base64, 'base64');
+    }
+}
+
 // ─── EXPORT PRINCIPAL ────────────────────────────────────────────────────────
 
-async function generateLPGraph(playerId, maxGames = 200) {
+/**
+ * @param {string} playerId
+ * @param {number} [maxGames=200] Nombre de games affichées sur le graphique
+ * @param {object} [opts]
+ * @param {number} [opts.quality=0.75] Qualité JPEG (0–1)
+ * @param {number} [opts.scale=2] Facteur de sur-échantillonnage (netteté)
+ * @param {boolean} [opts.useStableScale=true] Utilise les bornes LP sur tout
+ *   l'historique du joueur plutôt que juste les games affichées, pour un
+ *   axe Y stable entre deux générations du graphique.
+ */
+async function generateLPGraph(playerId, maxGames = 200, opts = {}) {
+    const {
+        quality = DEFAULT_QUALITY,
+        scale = DEFAULT_RENDER_SCALE,
+        useStableScale = true,
+    } = opts;
+
     const rows = fetchHistory(playerId, maxGames);
-    if (!rows || rows.length < 2) {
+    if (!rows || rows.length < MIN_POINTS) {
         throw new Error('Pas assez de données pour générer le graphique');
     }
 
@@ -385,16 +446,21 @@ async function generateLPGraph(playerId, maxGames = 200) {
         delta: r.lp_change || 0,
     }));
 
-    let minLP = Infinity, maxLP = -Infinity;
-    for (const p of points) {
-        if (p.lp < minLP) minLP = p.lp;
-        if (p.lp > maxLP) maxLP = p.lp;
+    let bounds = useStableScale ? fetchAllTimeBounds(playerId) : null;
+    if (!bounds) {
+        let minLP = Infinity, maxLP = -Infinity;
+        for (const p of points) {
+            if (p.lp < minLP) minLP = p.lp;
+            if (p.lp > maxLP) maxLP = p.lp;
+        }
+        bounds = { minLP: Math.max(0, minLP - 180), maxLP: maxLP + 180 };
     }
-    minLP = Math.max(0, minLP - 180);
-    maxLP = maxLP + 180;
+    const { minLP, maxLP } = bounds;
 
-    const canvas = createCanvas(W, H);
+    const canvas = createCanvas(W * scale, H * scale);
     const ctx = canvas.getContext('2d');
+    ctx.scale(scale, scale); // tout le code de dessin ci-dessous reste en coordonnées logiques W×H
+
     const graphW = W - PAD.left - PAD.right;
     const graphH = H - PAD.top - PAD.bottom;
 
@@ -402,21 +468,24 @@ async function generateLPGraph(playerId, maxGames = 200) {
     drawTierBands(ctx, minLP, maxLP, graphW, graphH);
     drawGridLines(ctx, minLP, maxLP, graphW, graphH);
     drawAxes(ctx, minLP, maxLP, graphW, graphH, points.length);
+
+    const peak = drawPeakLine(ctx, points, minLP, maxLP, graphW, graphH);
+
+    drawPeakLine(ctx, points, minLP, maxLP, graphW, graphH);
     drawLine(ctx, points, minLP, maxLP, graphW, graphH);
     drawPoints(ctx, points, minLP, maxLP, graphW, graphH);
     drawStats(ctx, points, graphW);
+    drawPeakSummary(ctx, peak, graphW);
 
-    logger.info('GRAPH', `Début encodage PNG pour playerId: ${playerId}`, {
-        points: points.length
+    logger.info('GRAPH', `Début encodage JPEG pour playerId: ${playerId}`, {
+        points: points.length,
+        scale,
     });
 
-    // Convertir via toDataURL — fonctionne sur toutes les versions node-canvas
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-    const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
-    const buffer = Buffer.from(base64, 'base64');
+    const buffer = encodeJPEG(canvas, quality);
     logger.info('GRAPH', `Encodage JPEG terminé`, { size: buffer.length });
 
     return buffer;
 }
 
-module.exports = { generateLPGraph };
+module.exports = { generateLPGraph, rankToLP, lpToLabel };

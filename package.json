@@ -20,6 +20,7 @@
     "discord-api-types": "^0.38.49",
     "discord.js": "^14.26.4",
     "dotenv": "^16.5.0",
+    "form-data": "^4.0.6",
     "node-cron": "^4.5.0"
   },
   "overrides": {

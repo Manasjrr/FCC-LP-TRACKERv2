@@ -5,6 +5,8 @@ const { buildDetailedStatsEmbed } = require("../embeds/detailedStatsEmbed");
 const { getMatch, getTimeline } = require("../services/riotApiService");
 const matchCache = require("../cache/matchCache");
 const logger = require("../utils/loggers");
+const axios = require("axios");
+const FormData = require("form-data");
 
 // ─── Router principal ─────────────────────────────────────────────────────────
 async function handleInteraction(interaction) {
@@ -20,6 +22,38 @@ async function handleInteraction(interaction) {
     if (interaction.isModalSubmit()) {
         return handleModal(interaction);
     }
+}
+
+async function editReplyWithRetry(interaction, payload, retries = 2) {
+    for (let i = 0; i <= retries; i++) {
+        try {
+            return await interaction.editReply(payload);
+        } catch (error) {
+            const isSocketError = error.code === 'UND_ERR_SOCKET'
+                || error.message?.includes('other side closed');
+            if (isSocketError && i < retries) {
+                logger.warn("HANDLER", `Retry editReply (${i + 1}/${retries}) après erreur socket`);
+                await new Promise(r => setTimeout(r, 500 * (i + 1)));
+                continue;
+            }
+            throw error;
+        }
+    }
+}
+
+async function sendFileViaAxios(interaction, embed, imageBuffer, filename) {
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify({
+        embeds: [embed.toJSON()],
+    }));
+    form.append('files[0]', imageBuffer, filename);
+
+    const url = `https://discord.com/api/v10/webhooks/${interaction.client.user.id}/${interaction.token}/messages/@original`;
+
+    return axios.patch(url, form, {
+        headers: form.getHeaders(),
+        timeout: 15000,
+    });
 }
 
 // ─── Commandes slash ──────────────────────────────────────────────────────────
@@ -129,14 +163,15 @@ async function handleLPChart(interaction) {
 
         if (!player) throw new Error(`Joueur introuvable (id: ${playerId})`);
 
-        const attachment = new AttachmentBuilder(imageBuffer, { name: "rank-evolution.jpg" });
         const embed = new EmbedBuilder()
             .setTitle("📊 Évolution du Rang")
             .setDescription(`Graphique d'évolution pour **${player.riot_id}**`)
             .setImage("attachment://rank-evolution.jpg")
             .setColor(0x00ff88);
 
-        await interaction.editReply({ embeds: [embed], files: [attachment] });
+        // ── Envoi via axios (bypass undici) ────────────────────────────────
+        await sendFileViaAxios(interaction, embed, imageBuffer, "rank-evolution.jpg");
+
     } catch (error) {
         logger.error("HANDLER", `Erreur graphique LP`, { error: error.message });
         await interaction.editReply({ content: `❌ Erreur : ${error.message}` });
