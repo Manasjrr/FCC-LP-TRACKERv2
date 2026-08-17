@@ -1,6 +1,6 @@
 // lp-graph.js — générateur de graphique ELO style moderne
 const { createCanvas } = require('canvas');
-const logger = require("../utils/loggers");
+const logger = require("./loggers");
 
 // ─── CONFIG ─────────────────────────────────────────────────────────────────
 
