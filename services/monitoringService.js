@@ -20,6 +20,10 @@ async function updatePatchVersion() {
     }
 }
 
+function getPatchVersion() {
+    return patchVersion;
+}
+
 updatePatchVersion();
 setInterval(updatePatchVersion, 24 * 60 * 60 * 1000);
 
@@ -193,4 +197,4 @@ function getServerPosition(riotId, guildId) {
     return { position, total: rows.length };
 }
 
-module.exports = { checkAllPlayers, sendRankChangeNotification, getServerPosition };
+module.exports = { checkAllPlayers, sendRankChangeNotification, getServerPosition, getPatchVersion};

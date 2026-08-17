@@ -9,6 +9,8 @@ const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
 const axios = require("axios");
 const logger = require("../utils/loggers");
 const { getSummonerByPuuid, getSoloQData, getChampionMasteries } = require("../services/riotApiService");
+const { getPatchVersion } = require("../services/monitoringService");
+
 
 // ─────────────────────────────────────────
 //  CACHE
@@ -43,9 +45,9 @@ const CACHE_CLEANUP_INTERVAL = 15 * 60 * 1000;
 // ─────────────────────────────────────────
 function buildProfileIconUrl(profileIconId) {
     if (typeof profileIconId === "number" && profileIconId >= 0) {
-        return `https://ddragon.leagueoflegends.com/cdn/${cachedPatchVersion}/img/profileicon/${profileIconId}.png`;
+        return `https://ddragon.leagueoflegends.com/cdn/${patch}/img/profileicon/${profileIconId}.png`;
     }
-    return `https://ddragon.leagueoflegends.com/cdn/${cachedPatchVersion}/img/profileicon/29.png`;
+    return `https://ddragon.leagueoflegends.com/cdn/${patch}/img/profileicon/29.png`;
 }
 
 // Nettoyage automatique du cache
