@@ -51,7 +51,7 @@ async function checkPlayerNewMatches(player, guildEntries, client) {
     // player = ligne de la table players (global, unique par puuid)
     // guildEntries = liste des player_guilds actifs pour ce joueur
 
-    const matchIds = await getRecentMatchIds(player.puuid, 5);
+    const matchIds = await getRecentMatchIds(player.puuid, 10);
     if (!matchIds?.length) return;
 
     const newMatchIds = [];
