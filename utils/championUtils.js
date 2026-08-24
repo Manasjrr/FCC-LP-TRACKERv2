@@ -18,7 +18,7 @@ const CHAMPION_NAMES = {
     429: "Kalista", 43: "Karma", 30: "Karthus", 38: "Kassadin",
     55: "Katarina", 10: "Kayle", 141: "Kayn", 85: "Kennen",
     121: "Kha'Zix", 203: "Kindred", 240: "Kled", 96: "Kog'Maw",
-    897: "K'Sante", 7: "LeBlanc", 64: "Lee Sin", 89: "Leona",
+    897: "K'Sante", 7: "Leblanc", 64: "Lee Sin", 89: "Leona",
     876: "Lillia", 127: "Lissandra", 236: "Lucian", 117: "Lulu",
     99: "Lux", 54: "Malphite", 90: "Malzahar", 57: "Maokai",
     11: "Master Yi", 902: "Milio", 21: "Miss Fortune", 82: "Mordekaiser",
