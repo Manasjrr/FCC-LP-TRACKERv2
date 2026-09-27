@@ -71,6 +71,35 @@ async function fetchAndCacheTimeline(matchId) {
     }
 }
 
+// ─── Synchronisation du Riot ID ──────────────────────────────────────────────
+// Le match contient le Riot ID actuel du joueur (riotIdGameName / riotIdTagline) :
+// si le joueur a changé de pseudo, on met à jour la BDD sans appel API.
+// Retourne { oldRiotId, newRiotId } si c'est un vrai changement de pseudo,
+// null sinon (identique, ou simple correction de majuscules / espaces)
+function syncRiotId(player, participant) {
+    const { riotIdGameName, riotIdTagline } = participant;
+    if (!riotIdGameName || !riotIdTagline) return null;
+
+    const oldRiotId = player.riot_id;
+    const newRiotId = `${riotIdGameName}#${riotIdTagline}`;
+    if (newRiotId === oldRiotId) return null;
+
+    try {
+        global.db.prepare(`UPDATE players SET riot_id = ? WHERE id = ?`).run(newRiotId, player.id);
+        logger.info("MATCH", `Riot ID mis à jour : ${oldRiotId} → ${newRiotId}`, { playerId: player.id });
+        player.riot_id = newRiotId;
+
+        const normalize = (id) => id.toLowerCase().replace(/\s/g, "");
+        return normalize(oldRiotId) === normalize(newRiotId) ? null : { oldRiotId, newRiotId };
+    } catch (error) {
+        logger.warn("MATCH", `Échec mise à jour Riot ID pour ${player.riot_id}`, {
+            newRiotId,
+            error: error.message,
+        });
+        return null;
+    }
+}
+
 // ─── Traitement d'un match ────────────────────────────────────────────────────
 async function processNewMatch(player, matchId, isLatest = false) {
 
@@ -120,6 +149,9 @@ async function processNewMatch(player, matchId, isLatest = false) {
                  .run(matchId, player.id);
         return;
     }
+
+    // ── Changement de Riot ID (données déjà présentes dans le match) ─────────
+    const riotIdChange = syncRiotId(player, participant);
 
     const oldLP   = player.last_lp  || 0;
     const oldRank = player.last_rank || "UNRANKED";
@@ -220,6 +252,7 @@ async function processNewMatch(player, matchId, isLatest = false) {
         oldRank,
         oldLP,
         isRemake,
+        riotIdChange,
         gameAge,
         isRecent: gameAge <= LIMIT_7J,
     };

@@ -1,7 +1,7 @@
 const axios = require("axios");
 const { getRecentMatchIds } = require("./riotApiService");
 const { processNewMatch, fetchAndCacheTimeline } = require("./matchService");
-const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildRankChangeEmbed } = require("../embeds/matchEmbed");
+const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
 const logger = require("../utils/loggers");
 
@@ -32,7 +32,7 @@ async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP
 }
 
 // ─── Vérification d'un joueur ─────────────────────────────────────────────────
-async function checkPlayerNewMatches(player, guildEntries, pendingNotifications) {
+async function checkPlayerNewMatches(player, guildEntries, pendingNotifications, pendingRenames) {
     // player = ligne de la table players (global, unique par puuid)
     // guildEntries = liste des player_guilds actifs pour ce joueur
 
@@ -66,6 +66,13 @@ async function checkPlayerNewMatches(player, guildEntries, pendingNotifications)
 
         const result = await processNewMatch(currentPlayer, matchId, isLatest);
         currentPlayer = global.db.prepare(`SELECT * FROM players WHERE id = ?`).get(player.id);
+
+        // Changement de pseudo : annoncé dans chaque salon qui suit le joueur
+        if (result?.riotIdChange) {
+            for (const guildEntry of guildEntries) {
+                pendingRenames.push({ channelId: guildEntry.channel_id, ...result.riotIdChange });
+            }
+        }
 
         if (!result?.isRecent) continue;
 
@@ -108,6 +115,22 @@ function getTrackedPlayersInMatch(match, guildId) {
         ...r,
         participant: match.participants.find((p) => p.puuid === r.puuid),
     }));
+}
+
+// ─── Envoi des changements de pseudo collectés ───────────────────────────────
+async function sendPendingRenames(client, pendingRenames) {
+    for (const { channelId, oldRiotId, newRiotId } of pendingRenames) {
+        try {
+            const channel = await client.channels.fetch(channelId).catch(() => null);
+            if (!channel) continue;
+            await channel.send({ embeds: [buildRiotIdChangeEmbed(oldRiotId, newRiotId)] });
+        } catch (error) {
+            logger.error("MONITOR", `Erreur envoi changement de pseudo ${oldRiotId} → ${newRiotId}`, {
+                channel: channelId,
+                error: error.message,
+            });
+        }
+    }
 }
 
 // ─── Envoi des notifications collectées ──────────────────────────────────────
@@ -186,6 +209,7 @@ async function checkAllPlayers(client) {
     let success = 0;
     let errors = 0;
     const pendingNotifications = new Map();
+    const pendingRenames = [];
 
     for (const player of players) {
         try {
@@ -195,7 +219,7 @@ async function checkAllPlayers(client) {
                 WHERE player_id = ? AND active = 1
             `).all(player.id);
 
-            await checkPlayerNewMatches(player, guildEntries, pendingNotifications);
+            await checkPlayerNewMatches(player, guildEntries, pendingNotifications, pendingRenames);
             success++;
         } catch (error) {
             errors++;
@@ -207,6 +231,7 @@ async function checkAllPlayers(client) {
         }
     }
 
+    await sendPendingRenames(client, pendingRenames);
     await sendPendingNotifications(client, pendingNotifications);
 
     logger.info("MONITOR", `Vérification terminée`, {

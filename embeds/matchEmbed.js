@@ -184,8 +184,18 @@ function buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP) {
         .setTimestamp();
 }
 
+// ─── Embed changement de pseudo ───────────────────────────────────────────────
+function buildRiotIdChangeEmbed(oldRiotId, newRiotId) {
+    return new EmbedBuilder()
+        .setTitle("✏️ CHANGEMENT DE PSEUDO")
+        .setDescription(`**${oldRiotId}** s'appelle désormais [**${newRiotId}**](${getDpmUrl(newRiotId)}) !`)
+        .setColor(0x5865f2)
+        .setTimestamp();
+}
+
 module.exports = {
     buildMatchNotifEmbed,
     buildGroupMatchNotifEmbed,
     buildRankChangeEmbed,
+    buildRiotIdChangeEmbed,
 };
