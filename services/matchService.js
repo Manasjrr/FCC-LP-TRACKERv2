@@ -2,6 +2,7 @@ const { getRankOrder } = require("../utils/rankUtils");
 const { getMatch, getSoloQData, getTimeline } = require("./riotApiService");
 const timelineCache = require("../cache/timelineCache");
 const matchCache = require("../cache/matchCache");
+const { extractMatchStats } = require("../utils/matchStatsUtils");
 const logger = require("../utils/loggers");
 
 const LIMIT_30J = 30 * 24 * 60 * 60 * 1000;
@@ -211,25 +212,31 @@ async function processNewMatch(player, matchId, isLatest = false) {
     }
 
     // ── Insertion BDD ─────────────────────────────────────────────────────────
+    const row = {
+        player_id:      player.id,
+        match_id:       matchId,
+        champion_id:    participant.championId,
+        champion_name:  participant.championName,
+        kills:          participant.kills,
+        deaths:         participant.deaths,
+        assists:        participant.assists,
+        win:            participant.win ? 1 : 0,
+        lp_change:      finalLpChange,
+        rank_before:    oldRank,
+        rank_after:     currentRank,
+        lp_before:      oldLP,
+        lp_after:       currentLP,
+        match_duration: match.info.gameDuration,
+        game_creation:  match.info.gameCreation,
+        is_remake:      isRemake ? 1 : 0,
+        ...extractMatchStats(match.info, participant),
+    };
+    const columns = Object.keys(row);
+
     global.db.prepare(`
-        INSERT INTO match_history (
-            player_id, match_id, champion_id, champion_name,
-            kills, deaths, assists, win, lp_change,
-            rank_before, rank_after, lp_before, lp_after,
-            match_duration, game_creation, is_remake
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        player.id, matchId,
-        participant.championId, participant.championName,
-        participant.kills, participant.deaths, participant.assists,
-        participant.win ? 1 : 0,
-        finalLpChange,
-        oldRank, currentRank,
-        oldLP, currentLP,
-        match.info.gameDuration,
-        match.info.gameCreation,
-        isRemake ? 1 : 0
-    );
+        INSERT INTO match_history (${columns.join(", ")})
+        VALUES (${columns.map((c) => `@${c}`).join(", ")})
+    `).run(row);
 
     logger.info("MATCH", `Match ${matchId} stocké pour ${player.riot_id}`);
 

@@ -87,6 +87,7 @@ FCC-LP-TRACKERv2/
     ├── graphUtils.js     # LP graph generation (Canvas)
     ├── weeklyRecap.js    # Weekly recap builder and sender
     ├── historyUtils.js   # Match history embed builder
+    ├── matchStatsUtils.js # Detailed match stats stored in match_history (role, CS, damage, vision...)
     └── loggers.js        # Console and file logger
 ```
 ---

@@ -1,3 +1,5 @@
+const { MATCH_STATS_COLUMNS } = require("../utils/matchStatsUtils");
+
 function initDB(db) {
     db.pragma("foreign_keys = ON");
 
@@ -155,6 +157,27 @@ function runMigrations(db) {
     if (unrankedPlayers || unrankedMatches) {
         console.log(`Migration : "Non classé" → "UNRANKED" (${unrankedPlayers} joueur(s), ${unrankedMatches} match(s))`);
     }
+
+    // Migration 5 — Statistiques détaillées dans match_history (rôle, CS, dégâts, vision...)
+    // Les colonnes sont définies dans utils/matchStatsUtils.js : toute nouvelle stat
+    // ajoutée là-bas est créée ici automatiquement
+    const existingColumns = new Set(
+        db.prepare(`SELECT name FROM pragma_table_info('match_history')`).all().map((c) => c.name)
+    );
+    const missingColumns = Object.entries(MATCH_STATS_COLUMNS)
+        .filter(([name]) => !existingColumns.has(name));
+
+    if (missingColumns.length) {
+        db.transaction(() => {
+            for (const [name, type] of missingColumns) {
+                db.prepare(`ALTER TABLE match_history ADD COLUMN ${name} ${type}`).run();
+            }
+        })();
+        console.log(`Migration : ${missingColumns.length} colonne(s) de stats ajoutée(s) à match_history`);
+    }
+
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_match_history_player_role
+        ON match_history (player_id, team_position)`).run();
 }
 
 module.exports = { initDB, runMigrations };
