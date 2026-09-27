@@ -1,6 +1,7 @@
 const { getRankOrder } = require("../utils/rankUtils");
 const { getMatch, getSoloQData, getTimeline } = require("./riotApiService");
 const timelineCache = require("../cache/timelineCache");
+const matchCache = require("../cache/matchCache");
 const logger = require("../utils/loggers");
 
 const LIMIT_30J = 30 * 24 * 60 * 60 * 1000;
@@ -60,6 +61,7 @@ function calculateLPChange(oldRank, oldLP, newRank, newLP) {
 
 // ─── Timeline en arrière-plan ────────────────────────────────────────────────
 async function fetchAndCacheTimeline(matchId) {
+    if (timelineCache.hasTimeline(matchId)) return;
     try {
         const timeline = await getTimeline(matchId);
         timelineCache.setTimeline(matchId, timeline);
@@ -83,7 +85,9 @@ async function processNewMatch(player, matchId, isLatest = false) {
     }
 
     // ── Récupération du match ─────────────────────────────────────────────────
-    const match = await getMatch(matchId);
+    // Si un autre joueur suivi était dans la même game, le match est déjà en cache
+    const cachedInfo = matchCache.getMatch(matchId);
+    const match = cachedInfo ? { info: cachedInfo } : await getMatch(matchId);
 
     // ── Filtre SoloQ ──────────────────────────────────────────────────────────
     if (match.info.queueId !== 420) {
@@ -92,6 +96,8 @@ async function processNewMatch(player, matchId, isLatest = false) {
                  .run(matchId, player.id);
         return;
     }
+
+    if (!cachedInfo) matchCache.setMatch(matchId, match.info);
 
     // ── Filtre âge ────────────────────────────────────────────────────────────
     const gameAge = Date.now() - match.info.gameCreation;

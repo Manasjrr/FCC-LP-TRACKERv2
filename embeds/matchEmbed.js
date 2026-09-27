@@ -21,7 +21,20 @@ function getPositionChangeText(positionBefore, positionAfter) {
     return `${arrow} #${positionAfter.position}/${positionAfter.total}`;
 }
 
-function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP, finalLpChange, matchId, patchVersion, positionBefore, positionAfter, isRemake = false) {
+// ─── Ligne "en duo avec / contre" ──────────────────────────────────────────
+// trackedMates = autres joueurs suivis présents dans la game : [{ riot_id, participant }]
+function getMatesText(participant, trackedMates = []) {
+    const allies = trackedMates.filter((m) => m.participant.teamId === participant.teamId);
+    const enemies = trackedMates.filter((m) => m.participant.teamId !== participant.teamId);
+    const names = (list) => list.map((m) => `**${m.riot_id}**`).join(", ");
+
+    const lines = [];
+    if (allies.length) lines.push(`👥 En duo avec ${names(allies)}`);
+    if (enemies.length) lines.push(`⚔️ Contre ${names(enemies)}`);
+    return lines.length ? lines.join("\n") : null;
+}
+
+function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP, finalLpChange, matchId, patchVersion, positionBefore, positionAfter, isRemake = false, trackedMates = []) {
     const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
     const clickablePlayerName = `[**${player.riot_id}**](https://dpm.lol/${riotIdFormatted})`;
     const lpChangeText = finalLpChange >= 0 ? `+${finalLpChange} LP` : `${finalLpChange} LP`;
@@ -36,9 +49,11 @@ function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP
 
     const title = isRemake ? "⚪ REMAKE" : participant.win ? "🟢 VICTOIRE" : "🔴 DÉFAITE";
     const color = isRemake ? 0x808080 : participant.win ? 0x00ff00 : 0xff0000;
-    const description = isRemake
+    const matesText = getMatesText(participant, trackedMates);
+    const description = (isRemake
         ? `${clickablePlayerName} vient de faire un remake !\n*Cette partie ne compte pas dans les statistiques.*`
-        : `${clickablePlayerName} vient de finir une partie !` + (multiKillText ? `\n${multiKillText}` : "");
+        : `${clickablePlayerName} vient de finir une partie !` + (multiKillText ? `\n${multiKillText}` : ""))
+        + (matesText ? `\n${matesText}` : "");
 
     const embed = new EmbedBuilder()
         .setTitle(title)
@@ -81,6 +96,83 @@ function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP
     );
 
     return { embed, row };
+}
+
+// ─── Rôles ───────────────────────────────────────────────────────────────────
+const ROLE_NAMES = {
+    TOP: "Top",
+    JUNGLE: "Jungle",
+    MIDDLE: "Mid",
+    BOTTOM: "ADC",
+    UTILITY: "Support",
+};
+
+// ─── Message groupé (plusieurs joueurs suivis dans la même game) ─────────────
+// En-tête "duo" + l'embed normal de chaque joueur, dans un seul message
+// entries = [{ player, result, positionBefore, positionAfter }]
+function buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion) {
+    const first = entries[0].result;
+    const isRemake = first.isRemake;
+    const sameTeam = entries.every((e) => e.result.participant.teamId === first.participant.teamId);
+
+    const nameWithRole = (e) => {
+        const role = ROLE_NAMES[e.result.participant.teamPosition];
+        return `**${e.player.riot_id}**${role ? ` (${role})` : ""}`;
+    };
+    const joinNames = (list) => list.length > 1
+        ? `${list.slice(0, -1).join(", ")} & ${list[list.length - 1]}`
+        : list[0];
+    const namesText = joinNames(entries.map(nameWithRole));
+
+    let color, description;
+    if (isRemake) {
+        color = 0x808080;
+        description = `👥 ${namesText} ont fait un remake ensemble.`;
+    } else if (sameTeam) {
+        const win = first.participant.win;
+        color = win ? 0x00ff00 : 0xff0000;
+        description = win
+            ? `👥 ${namesText} ont gagné ensemble !`
+            : `👥 ${namesText} ont perdu ensemble...`;
+    } else {
+        color = 0xffa500;
+        description = `⚔️ ${namesText} se sont affrontés !`;
+    }
+
+    // En-tête + embed normal de chaque joueur
+    // (Discord limite à 10 embeds par message : en-tête + 9 joueurs)
+    const embeds = [new EmbedBuilder().setDescription(description).setColor(color)];
+
+    for (const { player, result, positionBefore, positionAfter } of entries.slice(0, 9)) {
+        const { embed } = buildMatchNotifEmbed(
+            player,
+            result.participant,
+            match,
+            result.currentRank,
+            result.currentLP,
+            result.finalLpChange,
+            matchId,
+            patchVersion,
+            positionBefore,
+            positionAfter,
+            result.isRemake
+        );
+        embeds.push(embed);
+    }
+
+    // Un bouton "Stats détaillées" par joueur (5 max par ligne)
+    const buttons = entries.map(({ player }) =>
+        new ButtonBuilder()
+            .setCustomId(`stats|${matchId}|${player.puuid}`)
+            .setLabel(`📊 ${player.riot_id}`.slice(0, 80))
+            .setStyle(ButtonStyle.Secondary)
+    );
+    const rows = [];
+    for (let i = 0; i < buttons.length; i += 5) {
+        rows.push(new ActionRowBuilder().addComponents(buttons.slice(i, i + 5)));
+    }
+
+    return { embeds, rows };
 }
 
 // ─── Embed changement de rang ─────────────────────────────────────────────────
@@ -240,6 +332,7 @@ function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
 
 module.exports = {
     buildMatchNotifEmbed,
+    buildGroupMatchNotifEmbed,
     buildRankChangeEmbed,
     buildDetailedStatsEmbed,
 };

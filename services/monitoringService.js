@@ -2,8 +2,7 @@ const { EmbedBuilder } = require("discord.js");
 const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
 const { getRecentMatchIds } = require("./riotApiService");
 const { processNewMatch, fetchAndCacheTimeline } = require("./matchService");
-const { buildMatchNotifEmbed } = require("../embeds/matchEmbed");
-const matchCache = require("../cache/matchCache");
+const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed } = require("../embeds/matchEmbed");
 const logger = require("../utils/loggers");
 
 
@@ -47,7 +46,7 @@ async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP
 }
 
 // ─── Vérification d'un joueur ─────────────────────────────────────────────────
-async function checkPlayerNewMatches(player, guildEntries, client) {
+async function checkPlayerNewMatches(player, guildEntries, pendingNotifications) {
     // player = ligne de la table players (global, unique par puuid)
     // guildEntries = liste des player_guilds actifs pour ce joueur
 
@@ -86,43 +85,109 @@ async function checkPlayerNewMatches(player, guildEntries, client) {
 
         if (!result?.isRecent) continue;
 
-        matchCache.setMatch(matchId, result.match.info);
-        fetchAndCacheTimeline(matchId).catch(() => { });
-
+        // Les notifications sont collectées puis envoyées en fin de cycle,
+        // groupées par salon + match (plusieurs joueurs suivis dans la même game)
         for (const guildEntry of guildEntries) {
-            const channel = await client.channels.fetch(guildEntry.channel_id).catch(() => null);
+            const key = `${guildEntry.channel_id}|${matchId}`;
+            if (!pendingNotifications.has(key)) {
+                pendingNotifications.set(key, {
+                    channelId: guildEntry.channel_id,
+                    guildId: guildEntry.guild_id,
+                    matchId,
+                    match: result.match.info,
+                    entries: [],
+                });
+            }
+
+            pendingNotifications.get(key).entries.push({
+                player: currentPlayer,
+                result,
+                positionBefore: positionsBefore[guildEntry.guild_id],
+                // Position APRÈS le match, pour ce même serveur
+                positionAfter: getServerPosition(currentPlayer.riot_id, guildEntry.guild_id),
+            });
+        }
+    }
+}
+
+// ─── Joueurs suivis du serveur présents dans une game (BDD uniquement) ───────
+function getTrackedPlayersInMatch(match, guildId) {
+    const puuids = match.participants.map((p) => p.puuid);
+    const rows = global.db.prepare(`
+        SELECT p.id, p.riot_id, p.puuid FROM players p
+        JOIN player_guilds pg ON pg.player_id = p.id
+        WHERE pg.guild_id = ? AND pg.active = 1
+          AND p.puuid IN (${puuids.map(() => "?").join(",")})
+    `).all(guildId, ...puuids);
+
+    return rows.map((r) => ({
+        ...r,
+        participant: match.participants.find((p) => p.puuid === r.puuid),
+    }));
+}
+
+// ─── Envoi des notifications collectées ──────────────────────────────────────
+async function sendPendingNotifications(client, pendingNotifications) {
+    const timelinesRequested = new Set();
+
+    for (const { channelId, guildId, matchId, match, entries } of pendingNotifications.values()) {
+        try {
+            // Timeline récupérée une seule fois par match
+            if (!timelinesRequested.has(matchId)) {
+                timelinesRequested.add(matchId);
+                fetchAndCacheTimeline(matchId).catch(() => { });
+            }
+
+            const channel = await client.channels.fetch(channelId).catch(() => null);
             if (!channel) continue;
 
-            // Position APRÈS le match, pour ce même serveur
-            const positionAfter = getServerPosition(currentPlayer.riot_id, guildEntry.guild_id);
-            const positionBefore = positionsBefore[guildEntry.guild_id];
+            if (entries.length > 1) {
+                const { embeds, rows } = buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion);
+                await channel.send({ embeds, components: rows });
+                logger.info("MONITOR", `Notification groupée envoyée pour ${matchId}`, {
+                    players: entries.map((e) => e.player.riot_id),
+                });
+            } else {
+                const { player, result, positionBefore, positionAfter } = entries[0];
 
-            const { embed, row } = buildMatchNotifEmbed(
-                currentPlayer,
-                result.participant,
-                result.match.info,
-                result.currentRank,
-                result.currentLP,
-                result.finalLpChange,
-                matchId,
-                patchVersion,
-                positionBefore,
-                positionAfter,
-                result.isRemake
-            );
+                // Coéquipiers / adversaires suivis détectés hors de ce cycle
+                const trackedMates = getTrackedPlayersInMatch(match, guildId)
+                    .filter((m) => m.id !== player.id);
 
-            await channel.send({ embeds: [embed], components: [row] });
-
-            if (result.oldRank && result.oldRank !== result.currentRank) {
-                await sendRankChangeNotification(
-                    currentPlayer,
-                    result.oldRank,
+                const { embed, row } = buildMatchNotifEmbed(
+                    player,
+                    result.participant,
+                    match,
                     result.currentRank,
-                    currentPlayer.last_lp,
                     result.currentLP,
-                    channel
+                    result.finalLpChange,
+                    matchId,
+                    patchVersion,
+                    positionBefore,
+                    positionAfter,
+                    result.isRemake,
+                    trackedMates
                 );
+                await channel.send({ embeds: [embed], components: [row] });
             }
+
+            for (const { player, result } of entries) {
+                if (result.oldRank && result.oldRank !== result.currentRank) {
+                    await sendRankChangeNotification(
+                        player,
+                        result.oldRank,
+                        result.currentRank,
+                        player.last_lp,
+                        result.currentLP,
+                        channel
+                    );
+                }
+            }
+        } catch (error) {
+            logger.error("MONITOR", `Erreur envoi notification pour ${matchId}`, {
+                channel: channelId,
+                error: error.message,
+            });
         }
     }
 }
@@ -149,6 +214,7 @@ async function checkAllPlayers(client) {
 
     let success = 0;
     let errors = 0;
+    const pendingNotifications = new Map();
 
     for (const player of players) {
         try {
@@ -158,7 +224,7 @@ async function checkAllPlayers(client) {
                 WHERE player_id = ? AND active = 1
             `).all(player.id);
 
-            await checkPlayerNewMatches(player, guildEntries, client);
+            await checkPlayerNewMatches(player, guildEntries, pendingNotifications);
             success++;
         } catch (error) {
             errors++;
@@ -169,6 +235,8 @@ async function checkAllPlayers(client) {
             });
         }
     }
+
+    await sendPendingNotifications(client, pendingNotifications);
 
     logger.info("MONITOR", `Vérification terminée`, {
         total: players.length,
