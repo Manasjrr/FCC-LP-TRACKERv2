@@ -11,6 +11,7 @@ const logger = require("../utils/loggers");
 const { getSummonerByPuuid, getSoloQData, getChampionMasteries } = require("../services/riotApiService");
 const { getPatchVersion } = require("../services/monitoringService");
 const { getChampionIdByName } = require("../utils/championUtils")
+const { getLinkedPlayer, getPlayerByRiotId } = require("../utils/historyUtils");
 
 // ─────────────────────────────────────────
 //  CACHE
@@ -162,15 +163,6 @@ module.exports = {
 //  RÉCUPÉRATION DES JOUEURS (DB)
 // ─────────────────────────────────────────
 
-function getLinkedPlayer(userId, guildId) {
-    return global.db.prepare(`
-        SELECT p.* FROM players p
-        JOIN user_links ul ON p.id = ul.player_id
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE ul.user_id = ? AND ul.guild_id = ? AND pg.guild_id = ? AND pg.active = 1
-    `).get(userId, guildId, guildId) ?? null;
-}
-
 function getServerPosition(targetRiotId, guildId) {
     const rows = global.db.prepare(`
         SELECT p.riot_id, p.last_rank, p.last_lp FROM players p
@@ -193,25 +185,6 @@ function getServerPosition(targetRiotId, guildId) {
     const percentile = total > 0 ? Math.round((position / total) * 100) : 0;
 
     return { position, total, percentile };
-}
-
-function getPlayerByRiotId(riotId, guildId) {
-    let player = global.db.prepare(`
-        SELECT p.* FROM players p
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE pg.guild_id = ? AND pg.active = 1 AND p.riot_id = ?
-    `).get(guildId, riotId);
-
-    if (player) return player;
-
-    player = global.db.prepare(`
-        SELECT p.* FROM players p
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE pg.guild_id = ? AND pg.active = 1 AND LOWER(p.riot_id) LIKE LOWER(?)
-        LIMIT 1
-    `).get(guildId, `%${riotId}%`);
-
-    return player ?? null;
 }
 
 // ─────────────────────────────────────────
@@ -304,7 +277,7 @@ function getMatchAnalysis(player) {
         FROM (
             SELECT win, kills, deaths, assists, lp_change
             FROM match_history
-            WHERE player_id = ?
+            WHERE player_id = ? AND is_remake = 0
             ORDER BY game_creation DESC
             LIMIT 50
         )
@@ -312,7 +285,7 @@ function getMatchAnalysis(player) {
 
     const recentMatches = global.db.prepare(`
         SELECT win FROM match_history
-        WHERE player_id = ?
+        WHERE player_id = ? AND is_remake = 0
         ORDER BY game_creation DESC
         LIMIT 20
     `).all(player.id);
@@ -432,7 +405,7 @@ function getTopChampionsRecent(player, matchCount = 50) {
     const rows = global.db.prepare(`
         SELECT champion_name, kills, deaths, assists, win
         FROM match_history
-        WHERE player_id = ?
+        WHERE player_id = ? AND is_remake = 0
         ORDER BY game_creation DESC
         LIMIT ?
     `).all(player.id, matchCount);

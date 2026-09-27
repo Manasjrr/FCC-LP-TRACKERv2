@@ -107,7 +107,8 @@ async function checkPlayerNewMatches(player, guildEntries, client) {
                 matchId,
                 patchVersion,
                 positionBefore,
-                positionAfter
+                positionAfter,
+                result.isRemake
             );
 
             await channel.send({ embeds: [embed], components: [row] });

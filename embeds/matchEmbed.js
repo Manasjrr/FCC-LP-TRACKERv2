@@ -21,7 +21,7 @@ function getPositionChangeText(positionBefore, positionAfter) {
     return `${arrow} #${positionAfter.position}/${positionAfter.total}`;
 }
 
-function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP, finalLpChange, matchId, patchVersion, positionBefore, positionAfter) {
+function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP, finalLpChange, matchId, patchVersion, positionBefore, positionAfter, isRemake = false) {
     const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
     const clickablePlayerName = `[**${player.riot_id}**](https://dpm.lol/${riotIdFormatted})`;
     const lpChangeText = finalLpChange >= 0 ? `+${finalLpChange} LP` : `${finalLpChange} LP`;
@@ -34,13 +34,16 @@ function buildMatchNotifEmbed(player, participant, match, currentRank, currentLP
 
     const positionText = getPositionChangeText(positionBefore, positionAfter);
 
+    const title = isRemake ? "⚪ REMAKE" : participant.win ? "🟢 VICTOIRE" : "🔴 DÉFAITE";
+    const color = isRemake ? 0x808080 : participant.win ? 0x00ff00 : 0xff0000;
+    const description = isRemake
+        ? `${clickablePlayerName} vient de faire un remake !\n*Cette partie ne compte pas dans les statistiques.*`
+        : `${clickablePlayerName} vient de finir une partie !` + (multiKillText ? `\n${multiKillText}` : "");
+
     const embed = new EmbedBuilder()
-        .setTitle(participant.win ? "🟢 VICTOIRE" : "🔴 DÉFAITE")
-        .setDescription(
-            `${clickablePlayerName} vient de finir une partie !` +
-            (multiKillText ? `\n${multiKillText}` : "")
-        )
-        .setColor(participant.win ? 0x00ff00 : 0xff0000)
+        .setTitle(title)
+        .setDescription(description)
+        .setColor(color)
         .setThumbnail(getChampionIconUrl(participant.championName, patchVersion))
         .addFields(
             {

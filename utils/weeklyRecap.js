@@ -17,19 +17,20 @@ function getPlayerWeeklyStats(player, weekStart, weekEnd) {
             AVG(CAST(mh.assists AS REAL))                         AS avg_assists,
             SUM(mh.lp_change)                                     AS total_lp_change,
             (SELECT rank_before FROM match_history
-             WHERE player_id = ? AND game_creation BETWEEN ? AND ?
+             WHERE player_id = ? AND is_remake = 0 AND game_creation BETWEEN ? AND ?
              ORDER BY game_creation ASC  LIMIT 1)                 AS week_start_rank,
             (SELECT lp_before   FROM match_history
-             WHERE player_id = ? AND game_creation BETWEEN ? AND ?
+             WHERE player_id = ? AND is_remake = 0 AND game_creation BETWEEN ? AND ?
              ORDER BY game_creation ASC  LIMIT 1)                 AS week_start_lp,
             (SELECT rank_after  FROM match_history
-             WHERE player_id = ? AND game_creation BETWEEN ? AND ?
+             WHERE player_id = ? AND is_remake = 0 AND game_creation BETWEEN ? AND ?
              ORDER BY game_creation DESC LIMIT 1)                 AS week_end_rank,
             (SELECT lp_after    FROM match_history
-             WHERE player_id = ? AND game_creation BETWEEN ? AND ?
+             WHERE player_id = ? AND is_remake = 0 AND game_creation BETWEEN ? AND ?
              ORDER BY game_creation DESC LIMIT 1)                 AS week_end_lp
         FROM match_history mh
         WHERE mh.player_id = ?
+          AND mh.is_remake = 0
           AND mh.game_creation BETWEEN ? AND ?
     `).get(
         player.id, startMs, endMs,   // week_start_rank
@@ -52,6 +53,7 @@ function getPlayerTopChampion(player, weekStart, weekEnd) {
             SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END)        AS wins_count
         FROM match_history
         WHERE player_id = ?
+          AND is_remake = 0
           AND game_creation BETWEEN ? AND ?
         GROUP BY champion_name
         ORDER BY games_count DESC

@@ -365,7 +365,7 @@ async function processBatch(players, batchSize = 3, delayMs = 200) {
 function getPlayerRecentStats(playerId) {
     const matches = global.db.prepare(`
         SELECT win FROM match_history
-        WHERE player_id = ?
+        WHERE player_id = ? AND is_remake = 0
         ORDER BY game_creation DESC
         LIMIT 20
     `).all(playerId);

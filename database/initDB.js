@@ -80,6 +80,7 @@ function initDB(db) {
             lp_after       INTEGER,
             match_duration INTEGER,
             game_creation  BIGINT,
+            is_remake      INTEGER DEFAULT 0,
             created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
             UNIQUE(player_id, match_id)
@@ -136,6 +137,21 @@ function runMigrations(db) {
 
         migrate();
         console.log(`Migration : ${players.length} joueur(s) migrés vers player_guilds`);
+    }
+
+    // Migration 3 — Ajout colonne is_remake dans match_history
+    // + marquage des remakes existants (partie < 5 min et aucune variation de LP)
+    const hasIsRemake = db.prepare(`
+        SELECT COUNT(*) as count FROM pragma_table_info('match_history') WHERE name = 'is_remake'
+    `).get().count > 0;
+
+    if (!hasIsRemake) {
+        db.prepare(`ALTER TABLE match_history ADD COLUMN is_remake INTEGER DEFAULT 0`).run();
+        const { changes } = db.prepare(`
+            UPDATE match_history SET is_remake = 1
+            WHERE match_duration < 300 AND lp_change = 0
+        `).run();
+        console.log(`Migration : colonne is_remake ajoutée à match_history (${changes} remake(s) détecté(s))`);
     }
 }
 

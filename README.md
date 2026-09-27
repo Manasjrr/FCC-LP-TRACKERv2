@@ -57,6 +57,7 @@ FCC-LP-TRACKERv2/
 │   ├── remove.js     # Remove a tracked player
 │   ├── list.js       # List all monitored players
 │   ├── stats.js      # Detailed stats for a player
+│   ├── history.js    # Match history for a player
 │   ├── link.js       # Link Discord to LoL account
 │   ├── ingame.js       # Show current player in games
 │   └── clear.js      # Delete messages (Admin/Owner only)
@@ -144,6 +145,7 @@ OWNER_ID=
 | `/remove` | Remove a tracked account from the server |
 | `/list` | Display all accounts currently being monitored, sorted by rank |
 | `/stats` | Show detailed ranked stats for a tracked player (by rank or linked account) |
+| `/history` | Show the last N ranked games (1-25) of a tracked player (by Riot ID or linked account) |
 | `/link` | Link your Discord account to your League of Legends account |
 | `/ingame` | Show all currently monitored players currently in-game |
 | `/clear` | Delete messages in a channel *(Admin and Owner only)* |

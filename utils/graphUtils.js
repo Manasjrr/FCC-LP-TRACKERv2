@@ -77,7 +77,7 @@ function fetchHistory(playerId, limit) {
     if (!global.db) throw new Error('global.db non initialisé');
     return global.db.prepare(
         `SELECT rank_after, lp_after, win, lp_change, game_creation
-     FROM match_history WHERE player_id = ?
+     FROM match_history WHERE player_id = ? AND is_remake = 0
      ORDER BY game_creation DESC LIMIT ?`
     ).all(playerId, limit).reverse();
 }

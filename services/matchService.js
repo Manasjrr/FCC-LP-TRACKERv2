@@ -5,6 +5,7 @@ const logger = require("../utils/loggers");
 
 const LIMIT_30J = 30 * 24 * 60 * 60 * 1000;
 const LIMIT_7J  =  7 * 24 * 60 * 60 * 1000;
+const REMAKE_MAX_DURATION = 5 * 60; // secondes
 
 // ─── Helper high elo ─────────────────────────────────────────────────────────
 function isHighElo(rank) {
@@ -116,6 +117,7 @@ async function processNewMatch(player, matchId, isLatest = false) {
 
     const oldLP   = player.last_lp  || 0;
     const oldRank = player.last_rank || "UNRANKED";
+    const isShortGame = match.info.gameDuration < REMAKE_MAX_DURATION;
     let currentLP, currentRank, finalLpChange;
 
     // ── LP réels (dernier match uniquement) ───────────────────────────────────
@@ -128,6 +130,13 @@ async function processNewMatch(player, matchId, isLatest = false) {
         logger.info("MATCH", `LP réels pour ${player.riot_id}`, {
             oldRank, oldLP, currentRank, currentLP, finalLpChange,
         });
+    } else if (isShortGame) {
+        // ── Remake probable (match en retard) ─────────────────────────────────
+        // Les LP réels ne sont pas connus ici : une partie < 5 min est un remake,
+        // on n'applique donc pas d'estimation ±20 LP
+        currentLP     = oldLP;
+        currentRank   = oldRank;
+        finalLpChange = 0;
     } else {
         // ── LP estimés (matchs en retard) ─────────────────────────────────────
         const ratingChange =
@@ -154,14 +163,23 @@ async function processNewMatch(player, matchId, isLatest = false) {
         }
     }
 
+    // ── Détection remake (partie < 5 min et aucune variation de LP) ──────────
+    const isRemake = isShortGame && finalLpChange === 0;
+
+    if (isRemake) {
+        logger.info("MATCH", `Match ${matchId} détecté comme remake pour ${player.riot_id}`, {
+            duration: match.info.gameDuration,
+        });
+    }
+
     // ── Insertion BDD ─────────────────────────────────────────────────────────
     global.db.prepare(`
         INSERT INTO match_history (
             player_id, match_id, champion_id, champion_name,
             kills, deaths, assists, win, lp_change,
             rank_before, rank_after, lp_before, lp_after,
-            match_duration, game_creation
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            match_duration, game_creation, is_remake
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         player.id, matchId,
         participant.championId, participant.championName,
@@ -171,7 +189,8 @@ async function processNewMatch(player, matchId, isLatest = false) {
         oldRank, currentRank,
         oldLP, currentLP,
         match.info.gameDuration,
-        match.info.gameCreation
+        match.info.gameCreation,
+        isRemake ? 1 : 0
     );
 
     logger.info("MATCH", `Match ${matchId} stocké pour ${player.riot_id}`);
@@ -193,6 +212,7 @@ async function processNewMatch(player, matchId, isLatest = false) {
         currentLP,
         finalLpChange,
         oldRank,
+        isRemake,
         gameAge,
         isRecent: gameAge <= LIMIT_7J,
     };
