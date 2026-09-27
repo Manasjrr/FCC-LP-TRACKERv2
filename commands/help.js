@@ -26,19 +26,13 @@ const COMMANDS_INFO = [
         name: "/stats",
         emoji: "📊",
         description: "Statistiques détaillées d'un joueur avec analyse de performance",
-        usage: "/stats [joueur: Pseudo#TAG]",
+        usage: "/stats joueur: Pseudo#TAG",
     },
     {
         name: "/history",
         emoji: "📜",
         description: "Historique des derniers matchs d'un joueur (1 à 25)",
-        usage: "/history [joueur: Pseudo#TAG] [nombre: 5]",
-    },
-    {
-        name: "/link",
-        emoji: "🔗",
-        description: "Lier ton compte Discord à un joueur suivi pour utiliser /stats et /history sans argument",
-        usage: "/link [joueur: Pseudo#TAG]",
+        usage: "/history joueur: Pseudo#TAG [nombre: 5]",
     },
     {
         name: "/ingame",

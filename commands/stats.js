@@ -11,7 +11,6 @@ const { getSummonerByPuuid, getSoloQData, getChampionMasteries } = require("../s
 const { getPatchVersion } = require("../services/monitoringService");
 const { getChampionIdByName } = require("../utils/championUtils");
 const {
-    getLinkedPlayer,
     getPlayerByRiotId,
     getServerPosition,
     formatRiotIdForUrl,
@@ -57,7 +56,7 @@ module.exports = {
             option
                 .setName("joueur")
                 .setDescription("Riot ID du joueur")
-                .setRequired(false)
+                .setRequired(true)
                 .setAutocomplete(true)
         ),
 
@@ -80,25 +79,13 @@ module.exports = {
             return interaction.editReply("❌ Base de données indisponible").catch(() => { });
         }
 
-        let targetPlayer = null;
-
-        if (joueurOption) {
-            targetPlayer = getPlayerByRiotId(joueurOption, interaction.guildId);
-            if (!targetPlayer) {
-                logger.warn('COMMAND', `Joueur "${joueurOption}" introuvable dans /stats`, { guild: interaction.guildId });
-                return interaction.editReply(
-                    `❌ Aucun joueur trouvé pour **${joueurOption}** sur ce serveur.\n` +
-                    `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
-                );
-            }
-        } else {
-            targetPlayer = getLinkedPlayer(interaction.user.id, interaction.guildId);
-            if (!targetPlayer) {
-                logger.info('COMMAND', `Aucun compte lié pour ${interaction.user.tag} dans /stats`, { guild: interaction.guildId });
-                return interaction.editReply(
-                    "❌ Aucun compte lié ! Utilise `/link` ou spécifie un `joueur`."
-                );
-            }
+        const targetPlayer = getPlayerByRiotId(joueurOption, interaction.guildId);
+        if (!targetPlayer) {
+            logger.warn('COMMAND', `Joueur "${joueurOption}" introuvable dans /stats`, { guild: interaction.guildId });
+            return interaction.editReply(
+                `❌ Aucun joueur trouvé pour **${joueurOption}** sur ce serveur.\n` +
+                `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
+            );
         }
 
         logger.info('COMMAND', `/stats → joueur ciblé : ${targetPlayer.riot_id}`, {

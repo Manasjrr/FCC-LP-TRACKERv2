@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require("discord.js");
 const logger = require("../utils/loggers");
 const { getPlayerMatches, createHistoryEmbedWithColors } = require("../utils/historyUtils");
-const { getLinkedPlayer, getPlayerByRiotId, autocompletePlayers } = require("../utils/playerUtils");
+const { getPlayerByRiotId, autocompletePlayers } = require("../utils/playerUtils");
 
 // ─────────────────────────────────────────
 //  COMMANDE
@@ -14,7 +14,7 @@ module.exports = {
             option
                 .setName("joueur")
                 .setDescription("Riot ID du joueur")
-                .setRequired(false)
+                .setRequired(true)
                 .setAutocomplete(true)
         )
         .addIntegerOption((option) =>
@@ -47,25 +47,13 @@ module.exports = {
             return interaction.editReply("❌ Base de données indisponible").catch(() => { });
         }
 
-        let targetPlayer = null;
-
-        if (joueurOption) {
-            targetPlayer = getPlayerByRiotId(joueurOption, interaction.guildId);
-            if (!targetPlayer) {
-                logger.warn('COMMAND', `Joueur "${joueurOption}" introuvable dans /history`, { guild: interaction.guildId });
-                return interaction.editReply(
-                    `❌ Aucun joueur trouvé pour **${joueurOption}** sur ce serveur.\n` +
-                    `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
-                );
-            }
-        } else {
-            targetPlayer = getLinkedPlayer(interaction.user.id, interaction.guildId);
-            if (!targetPlayer) {
-                logger.info('COMMAND', `Aucun compte lié pour ${interaction.user.tag} dans /history`, { guild: interaction.guildId });
-                return interaction.editReply(
-                    "❌ Aucun compte lié ! Utilise `/link` ou spécifie un `joueur`."
-                );
-            }
+        const targetPlayer = getPlayerByRiotId(joueurOption, interaction.guildId);
+        if (!targetPlayer) {
+            logger.warn('COMMAND', `Joueur "${joueurOption}" introuvable dans /history`, { guild: interaction.guildId });
+            return interaction.editReply(
+                `❌ Aucun joueur trouvé pour **${joueurOption}** sur ce serveur.\n` +
+                `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
+            );
         }
 
         try {

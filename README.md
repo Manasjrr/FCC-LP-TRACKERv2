@@ -36,7 +36,6 @@ It automatically detects new matches, posts win/loss alerts in designated channe
 - 🏆 **Weekly recap** — automated summary posted every **Friday at 6:00 PM (Paris time)**
 - 📜 **Match history** — display the last N ranked games for any tracked player (up to 25)
 - ➕ **Player management** — add, remove, list and clear tracked accounts per server
-- 🔗 **Account linking** — link a Discord user to their League of Legends account
 - 👥 **Duo detection** — tracked players in the same game are grouped into a single notification (with their roles)
 - ⚪ **Remake detection** — games under 5 min with no LP change are flagged as remakes and excluded from stats and weekly recap
 
@@ -60,7 +59,6 @@ FCC-LP-TRACKERv2/
 │   ├── list.js         # List all monitored players
 │   ├── stats.js        # Detailed stats for a player
 │   ├── history.js      # Match history for a player
-│   ├── link.js         # Link Discord to LoL account
 │   ├── ingame.js       # Show tracked players currently in game
 │   ├── clear.js        # Delete messages (Admin/Owner only)
 │   ├── force-recap.js  # Force the weekly recap (Owner only)
@@ -148,9 +146,8 @@ OWNER_ID=
 | `/add` | Add a League of Legends account to the monitoring list |
 | `/remove` | Remove a tracked account from the server |
 | `/list` | Display all accounts currently being monitored, sorted by rank |
-| `/stats` | Show detailed ranked stats for a tracked player (by rank or linked account) |
-| `/history` | Show the last N ranked games (1-25) of a tracked player (by Riot ID or linked account) |
-| `/link` | Link your Discord account to your League of Legends account |
+| `/stats` | Show detailed ranked stats for a tracked player (by Riot ID) |
+| `/history` | Show the last N ranked games (1-25) of a tracked player (by Riot ID) |
 | `/ingame` | Show all currently monitored players currently in-game |
 | `/clear` | Delete messages in a channel *(Admin and Owner only)* |
 

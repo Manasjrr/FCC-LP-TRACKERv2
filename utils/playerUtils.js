@@ -14,16 +14,6 @@ function getGuildPlayers(guildId) {
     `).all(guildId);
 }
 
-// Joueur lié au compte Discord (actif sur le serveur)
-function getLinkedPlayer(userId, guildId) {
-    return global.db.prepare(`
-        SELECT p.* FROM players p
-        JOIN user_links ul ON p.id = ul.player_id
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE ul.user_id = ? AND ul.guild_id = ? AND pg.guild_id = ? AND pg.active = 1
-    `).get(userId, guildId, guildId) ?? null;
-}
-
 // Joueur par Riot ID (exact, puis recherche partielle)
 function getPlayerByRiotId(riotId, guildId) {
     let player = global.db.prepare(`
@@ -101,7 +91,6 @@ async function autocompletePlayers(interaction) {
 module.exports = {
     getPlayerById,
     getGuildPlayers,
-    getLinkedPlayer,
     getPlayerByRiotId,
     sortPlayersByRank,
     getServerPosition,

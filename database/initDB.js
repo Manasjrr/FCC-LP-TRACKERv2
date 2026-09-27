@@ -47,20 +47,6 @@ function initDB(db) {
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_player_guilds_player
         ON player_guilds (player_id)`).run();
 
-    // ── Table user_links ──────────────────────────────────────────────────────
-    db.prepare(`
-        CREATE TABLE IF NOT EXISTS user_links (
-            user_id   TEXT,
-            guild_id  TEXT,
-            player_id INTEGER,
-            PRIMARY KEY (user_id, guild_id),
-            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
-        )
-    `).run();
-
-    db.prepare(`CREATE INDEX IF NOT EXISTS idx_user_links_player_id
-        ON user_links (player_id)`).run();
-
     // ── Table match_history ───────────────────────────────────────────────────
     db.prepare(`
         CREATE TABLE IF NOT EXISTS match_history (
