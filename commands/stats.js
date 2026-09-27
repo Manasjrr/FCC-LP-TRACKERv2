@@ -10,6 +10,7 @@ const logger = require("../utils/loggers");
 const { getSummonerByPuuid, getSoloQData, getChampionMasteries } = require("../services/riotApiService");
 const { getPatchVersion } = require("../services/monitoringService");
 const { getChampionIdByName } = require("../utils/championUtils");
+const { computePlayerRating, ROLE_LABELS } = require("../utils/ratingUtils");
 const {
     getPlayerByRiotId,
     getServerPosition,
@@ -264,15 +265,7 @@ function getMatchAnalysis(player) {
         lpChange: Math.round(agg.total_lp_change ?? 0),
         currentStreak,
         streakType,
-        performanceLevel: getPerformanceLevel({
-            recentWinrate: totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0,
-            globalWinrate: totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0,
-            avgKDA: avgKDANum ?? 0,
-            currentStreak,
-            streakType,
-            lpTrend: agg.total_lp_change ?? 0,
-            totalGames,
-        }),
+        rating: computePlayerRating(player.id),
     };
 
     statsCache.set(cacheKey, { data: analysis, timestamp: Date.now() });
@@ -283,63 +276,6 @@ function getMatchAnalysis(player) {
     });
 
     return analysis;
-}
-
-// ─────────────────────────────────────────
-//  NIVEAU DE PERFORMANCE
-// ─────────────────────────────────────────
-function getPerformanceLevel({
-    recentWinrate = 0,
-    globalWinrate = 0,
-    avgKDA = 0,
-    currentStreak = 0,
-    streakType = "none",
-    lpTrend = 0,
-    totalGames = 0,
-} = {}) {
-    let score = 0;
-    let bonusPoints = 0;
-    let penalties = 0;
-
-    if (recentWinrate >= 80) score += 3;
-    else if (recentWinrate >= 70) score += 2.5;
-    else if (recentWinrate >= 60) score += 2;
-    else if (recentWinrate >= 50) score += 1;
-    else if (recentWinrate >= 40) score -= 1;
-
-    if (globalWinrate >= 65) score += 3;
-    else if (globalWinrate >= 55) score += 2;
-    else if (globalWinrate >= 50) score += 1.5;
-    else if (globalWinrate >= 45) score += 1;
-    else score -= 2;
-
-    const kdaNum = typeof avgKDA === "string" ? 99 : avgKDA;
-    if (kdaNum >= 3.5) score += 2.5;
-    else if (kdaNum >= 2.5) score += 2;
-    else if (kdaNum >= 2.0) score += 1;
-    else if (kdaNum >= 1.5) score += 0;
-    else if (kdaNum >= 1.0) score -= 2;
-
-    if (streakType === "win") {
-        if (currentStreak >= 7) bonusPoints += 1;
-        else if (currentStreak >= 5) bonusPoints += 0.5;
-        else if (currentStreak >= 3) bonusPoints += 0.25;
-    } else if (streakType === "loss") {
-        if (currentStreak >= 5) penalties += 5;
-        else if (currentStreak >= 3) penalties += 1;
-    }
-
-    if (lpTrend > 100) bonusPoints += 0.75;
-    else if (lpTrend < -100) penalties += 0.5;
-
-    const finalScore = Math.max(0, score + bonusPoints - penalties);
-
-    if (finalScore >= 8.5) return { level: "🌟 CANNA-MESSI-CR7", color: 0xF0E68C };
-    else if (finalScore >= 7.0) return { level: "🔥 EXCELLENT", color: 0x8500FF };
-    else if (finalScore >= 5.5) return { level: "⭐ TRES BON", color: 0x00FF00 };
-    else if (finalScore >= 4.0) return { level: "✅ SOLIDE", color: 0x00BFFF };
-    else if (finalScore >= 2.5) return { level: "⚡ MOYEN", color: 0xFFD700 };
-    else return { level: "❄️ RAZMO TIER", color: 0xFF6B6B };
 }
 
 // ─────────────────────────────────────────
@@ -433,7 +369,12 @@ async function getChampionMastery(player) {
 // ─────────────────────────────────────────
 async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, interaction) {
     const rankEmoji = getRankEmoji(stats.currentRank);
-    const performance = analysis.performanceLevel;
+    const { rating } = analysis;
+    const ratingText = rating.empty
+        ? "❔ Pas encore de note (aucune game)"
+        : `${rating.tier.label}\n🧮 **${rating.score}/100** (${rating.tier.grade})` +
+          (rating.mainRole !== "DEFAULT" ? ` • ${ROLE_LABELS[rating.mainRole]}` : "") +
+          (rating.provisional ? " • *provisoire*" : "");
 
     const riotIdFormatted = formatRiotIdForUrl(player.riot_id);
     const links = [
@@ -453,7 +394,7 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
     const embed = new EmbedBuilder()
         .setTitle(`📊 ${player.riot_id}`)
         .setDescription(`${links}\n*Analyse demandée par ${interaction.user.displayName}*`)
-        .setColor(performance.color)
+        .setColor(rating.tier.color)
         .setThumbnail(profileIconUrl)
         .addFields(
             {
@@ -467,7 +408,7 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
             {
                 name: "⚡ **PERFORMANCE RÉCENTE**",
                 value:
-                    `${performance.level}\n` +
+                    `${ratingText}\n` +
                     `${streakText}\n` +
                     `⚔️ **${analysis.avgKDA}** KDA (${analysis.avgKills}/${analysis.avgDeaths}/${analysis.avgAssists})`,
                 inline: true,
@@ -530,8 +471,8 @@ function createInteractiveButtons(player) {
             .setLabel("📜 Match History")
             .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
-            .setCustomId("compare_rank")
-            .setLabel("⚖️ Comparer")
+            .setCustomId(`rating_info_${player.id}`)
+            .setLabel("🧮 Infos note")
             .setStyle(ButtonStyle.Secondary)
     );
 }

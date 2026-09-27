@@ -1,9 +1,12 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require("discord.js");
 const { generateLPGraph } = require("../utils/graphUtils");
 const { getPlayerMatches, createHistoryEmbedWithColors } = require("../utils/historyUtils");
-const { getPlayerById } = require("../utils/playerUtils");
+const { getPlayerById, getGuildPlayers } = require("../utils/playerUtils");
+const { computePlayerRating, getGuildRatingRanking } = require("../utils/ratingUtils");
+const { buildRatingEmbed } = require("../embeds/ratingEmbed");
 const { buildDetailedStatsEmbed } = require("../embeds/detailedStatsEmbed");
 const { getMatch, getTimeline } = require("../services/riotApiService");
+const { storeTimelineStats } = require("../services/matchService");
 const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
 const logger = require("../utils/loggers");
@@ -105,13 +108,9 @@ async function handleButton(interaction) {
             });
         }
 
-        // Comparer
-        if (customId === "compare_rank") {
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-            return interaction.followUp({
-                content: "🏆 **Comparaison à venir !**",
-                flags: MessageFlags.Ephemeral,
-            });
+        // Infos note
+        if (customId.startsWith("rating_info_")) {
+            return handleRatingInfo(interaction);
         }
 
         // Inconnu
@@ -163,6 +162,35 @@ async function handleLPChart(interaction) {
     }
 }
 
+// ─── Infos note (détail + barème) ─────────────────────────────────────────────
+async function handleRatingInfo(interaction) {
+    const playerId = Number(interaction.customId.split("_")[2]);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    const player = getPlayerById(playerId);
+    if (!player) {
+        return interaction.editReply({ content: `❌ Joueur introuvable (ID: ${playerId})` });
+    }
+
+    const ranking = getGuildRatingRanking(getGuildPlayers(interaction.guildId));
+    const index = ranking.findIndex((r) => r.player.id === playerId);
+    const rating = index >= 0 ? ranking[index].rating : computePlayerRating(playerId);
+
+    if (rating.empty) {
+        return interaction.editReply({ content: `❔ **${player.riot_id}** n'a pas encore de game classée enregistrée.` });
+    }
+
+    logger.info("HANDLER", `Infos note consultées par ${interaction.user.tag}`, {
+        player: player.riot_id,
+        score: rating.score,
+        guild: interaction.guildId,
+    });
+
+    await interaction.editReply({
+        embeds: [buildRatingEmbed(player, rating, index >= 0 ? { position: index + 1, total: ranking.length } : null)],
+    });
+}
+
 // ─── Bouton historique → ouvre le modal ──────────────────────────────────────
 async function handleMatchHistoryButton(interaction) {
     const playerId = interaction.customId.split("_")[2];
@@ -205,6 +233,8 @@ async function getDetailedStatsEmbed(matchId, puuid, userTag) {
         try {
             timeline = await getTimeline(matchId);
             timelineCache.setTimeline(matchId, timeline);
+            // Profite de l'appel pour enregistrer les stats timeline (écarts à 15 min...)
+            storeTimelineStats(matchId, timeline, matchInfo);
         } catch (error) {
             logger.warn("HANDLER", `Timeline indisponible pour ${matchId}`, { error: error.message });
         }

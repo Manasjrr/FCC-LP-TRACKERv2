@@ -1,6 +1,6 @@
 const axios = require("axios");
 const { getRecentMatchIds } = require("./riotApiService");
-const { processNewMatch, fetchAndCacheTimeline } = require("./matchService");
+const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = require("./matchService");
 const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
 const logger = require("../utils/loggers");
@@ -142,7 +142,7 @@ async function sendPendingNotifications(client, pendingNotifications) {
             // Timeline récupérée une seule fois par match
             if (!timelinesRequested.has(matchId)) {
                 timelinesRequested.add(matchId);
-                fetchAndCacheTimeline(matchId).catch(() => { });
+                fetchAndCacheTimeline(matchId, match).catch(() => { });
             }
 
             const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -233,6 +233,11 @@ async function checkAllPlayers(client) {
 
     await sendPendingRenames(client, pendingRenames);
     await sendPendingNotifications(client, pendingNotifications);
+
+    // Timelines qui n'ont pas pu être récupérées lors d'un cycle précédent
+    await retryMissingTimelines().catch((error) =>
+        logger.error("MONITOR", `Erreur réessai timelines`, { error: error.message })
+    );
 
     logger.info("MONITOR", `Vérification terminée`, {
         total: players.length,

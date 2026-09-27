@@ -31,7 +31,7 @@ It automatically detects new matches, posts win/loss alerts in designated channe
 ## Features
 
 - 🔍 **Automatic match detection** — polls the Riot API every 2 minutes to catch new ranked games
-- 📊 **Detailed player stats** — winrate, KDA, LP trend, top champions, server leaderboard and performance score
+- 📊 **Detailed player stats** — winrate, KDA, LP trend, top champions, server leaderboard and a role-aware rating out of 100 (with full breakdown and scale)
 - 📈 **LP progression graph** — visual chart of LP gains and losses over time
 - 🏆 **Weekly recap** — automated summary posted every **Friday at 6:00 PM (Paris time)**
 - 📜 **Match history** — display the last N ranked games for any tracked player (up to 25)
@@ -69,7 +69,8 @@ FCC-LP-TRACKERv2/
 │
 ├── embeds/
 │   ├── detailedStatsEmbed.js # Build advanced match stats embed (timeline + comparisons)
-│   └── matchEmbed.js         # Match notifications (solo, duo/group, remake) + rank change embeds
+│   ├── matchEmbed.js         # Match notifications (solo, duo/group, remake) + rank change embeds
+│   └── ratingEmbed.js        # Player rating details + rating scale ("Infos note" button)
 │
 ├── handlers/
 │   ├── commandHandler.js      # Load + deploy slash commands dynamically
@@ -82,6 +83,7 @@ FCC-LP-TRACKERv2/
 │
 └── utils/
     ├── playerUtils.js    # Player lookups, server ranking, DPM links, shared autocomplete
+    ├── ratingUtils.js    # Role-aware player rating (/100) used by /stats
     ├── rankUtils.js      # Rank emoji and ordering helpers
     ├── championUtils.js  # Champion names / ids / icons
     ├── graphUtils.js     # LP graph generation (Canvas)

@@ -2,7 +2,7 @@ const { getRankOrder } = require("../utils/rankUtils");
 const { getMatch, getSoloQData, getTimeline } = require("./riotApiService");
 const timelineCache = require("../cache/timelineCache");
 const matchCache = require("../cache/matchCache");
-const { extractMatchStats } = require("../utils/matchStatsUtils");
+const { extractMatchStats, extractEarlyDragons, extractLaneDiffs15 } = require("../utils/matchStatsUtils");
 const logger = require("../utils/loggers");
 
 const LIMIT_30J = 30 * 24 * 60 * 60 * 1000;
@@ -61,14 +61,118 @@ function calculateLPChange(oldRank, oldLP, newRank, newLP) {
 }
 
 // ─── Timeline en arrière-plan ────────────────────────────────────────────────
-async function fetchAndCacheTimeline(matchId) {
-    if (timelineCache.hasTimeline(matchId)) return;
+async function fetchAndCacheTimeline(matchId, matchInfo) {
+    let timeline = timelineCache.getTimeline(matchId);
+    if (!timeline) {
+        try {
+            timeline = await getTimeline(matchId);
+            timelineCache.setTimeline(matchId, timeline);
+            logger.info("MATCH", `Timeline cachée pour ${matchId}`);
+        } catch (error) {
+            logger.warn("MATCH", `Échec récupération timeline pour ${matchId} (sera retentée au prochain cycle)`, {
+                status: error.response?.status,
+                error: error.message,
+            });
+            return false;
+        }
+    }
+    storeTimelineStats(matchId, timeline, matchInfo);
+    return true;
+}
+
+// ─── Stats issues de la timeline → match_history ─────────────────────────────
+// matchInfo (match.info) sert aux écarts à 15 min face à l'adversaire direct
+function storeTimelineStats(matchId, timeline, matchInfo = matchCache.getMatch(matchId)) {
     try {
-        const timeline = await getTimeline(matchId);
-        timelineCache.setTimeline(matchId, timeline);
-        logger.info("MATCH", `Timeline cachée pour ${matchId}`);
+        const earlyDragons = extractEarlyDragons(timeline);
+        global.db.prepare(`
+            UPDATE match_history
+            SET early_dragons = CASE team_id WHEN 100 THEN ? WHEN 200 THEN ? END
+            WHERE match_id = ? AND team_id IS NOT NULL
+        `).run(earlyDragons[100], earlyDragons[200], matchId);
+
+        // Écarts à 15:00 face à l'adversaire direct, pour chaque joueur suivi de la game
+        if (!matchInfo) return;
+
+        const updateLane = global.db.prepare(`
+            UPDATE match_history SET gold_diff_15 = @gold_diff_15, xp_diff_15 = @xp_diff_15, cs_diff_15 = @cs_diff_15
+            WHERE id = @id
+        `);
+        for (const row of getMatchRows(matchId)) {
+            const diffs = extractLaneDiffs15(timeline, matchInfo, row.puuid);
+            if (diffs) updateLane.run({ id: row.id, ...diffs });
+        }
     } catch (error) {
-        logger.warn("MATCH", `Échec cache timeline pour ${matchId}`, { error: error.message });
+        logger.warn("MATCH", `Échec stats timeline pour ${matchId}`, { error: error.message });
+    }
+}
+
+// Lignes match_history d'un match (une par joueur suivi présent dans la game)
+function getMatchRows(matchId) {
+    return global.db.prepare(`
+        SELECT mh.id, p.puuid FROM match_history mh
+        JOIN players p ON p.id = mh.player_id
+        WHERE mh.match_id = ?
+    `).all(matchId);
+}
+
+// ─── Stats détaillées d'un match déjà en BDD (rattrapage) ───────────────────
+// Remplit les colonnes de stats (rôle, CS, dégâts...) sans toucher aux LP / rangs
+function storeMatchStats(matchId, matchInfo) {
+    let updated = 0;
+    for (const row of getMatchRows(matchId)) {
+        const participant = matchInfo.participants.find((p) => p.puuid === row.puuid);
+        if (!participant) continue;
+
+        const stats = extractMatchStats(matchInfo, participant);
+        const columns = Object.keys(stats);
+        global.db.prepare(`
+            UPDATE match_history SET ${columns.map((c) => `${c} = @${c}`).join(", ")}
+            WHERE id = @id
+        `).run({ ...stats, id: row.id });
+        updated++;
+    }
+    return updated;
+}
+
+// ─── Réessai des timelines manquantes (monitoring) ───────────────────────────
+// Games récentes (< 7 jours) dont la timeline n'a jamais pu être traitée
+// (appel échoué, timeline pas encore disponible...). Limité à quelques matchs
+// par cycle : un réessai ne fait que remplacer un appel qui a échoué.
+const MAX_TIMELINE_RETRIES = 3;
+const timelineRetries = new Map(); // matchId → nombre de réessais
+
+async function retryMissingTimelines(limit = 2) {
+    const matchIds = global.db.prepare(`
+        SELECT DISTINCT match_id FROM match_history
+        WHERE team_id IS NOT NULL
+          AND early_dragons IS NULL
+          AND is_remake = 0
+          AND game_creation > ?
+          AND created_at < datetime('now', '-5 minutes')
+        ORDER BY game_creation DESC
+    `).all(Date.now() - LIMIT_7J)
+        .map((r) => r.match_id)
+        .filter((id) => (timelineRetries.get(id) ?? 0) < MAX_TIMELINE_RETRIES)
+        .slice(0, limit);
+
+    for (const matchId of matchIds) {
+        const attempt = (timelineRetries.get(matchId) ?? 0) + 1;
+        timelineRetries.set(matchId, attempt);
+        logger.info("MATCH", `Nouvel essai (${attempt}/${MAX_TIMELINE_RETRIES}) de récupération de la timeline pour ${matchId}`);
+
+        // Match nécessaire pour les écarts à 15 min (en cache sauf après un redémarrage)
+        let matchInfo = matchCache.getMatch(matchId);
+        if (!matchInfo) {
+            try {
+                matchInfo = (await getMatch(matchId)).info;
+                matchCache.setMatch(matchId, matchInfo);
+            } catch (error) {
+                logger.warn("MATCH", `Échec récupération match ${matchId} pour le réessai`, { error: error.message });
+                continue;
+            }
+        }
+        await fetchAndCacheTimeline(matchId, matchInfo);
     }
 }
 
@@ -265,4 +369,12 @@ async function processNewMatch(player, matchId, isLatest = false) {
     };
 }
 
-module.exports = { processNewMatch, calculateLPChange, fetchAndCacheTimeline, isHighElo };
+module.exports = {
+    processNewMatch,
+    calculateLPChange,
+    fetchAndCacheTimeline,
+    storeTimelineStats,
+    storeMatchStats,
+    retryMissingTimelines,
+    isHighElo,
+};
