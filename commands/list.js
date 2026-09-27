@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
+const { getRankEmoji } = require("../utils/rankUtils");
 const logger = require("../utils/loggers");
+const { getGuildPlayers, sortPlayersByRank, getDpmUrl } = require("../utils/playerUtils");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -13,25 +14,14 @@ module.exports = {
         logger.info('COMMAND', `/list exécuté par ${interaction.user.tag}`, { guild: interaction.guildId });
 
         // ── Joueurs actifs sur CE serveur uniquement ───────────────────────────
-        const rows = global.db.prepare(`
-            SELECT p.* FROM players p
-            JOIN player_guilds pg ON pg.player_id = p.id
-            WHERE pg.guild_id = ? AND pg.active = 1
-        `).all(interaction.guildId);
+        const rows = getGuildPlayers(interaction.guildId);
 
         if (!rows || rows.length === 0) {
             logger.info('COMMAND', `Aucun compte surveillé sur le serveur`, { guild: interaction.guildId });
             return interaction.editReply("📭 Aucun compte surveillé sur ce serveur.");
         }
 
-        rows.sort((a, b) => {
-            const rankA = getRankOrder(a.last_rank, a.last_lp);
-            const rankB = getRankOrder(b.last_rank, b.last_lp);
-
-            if (rankB.order !== rankA.order) return rankB.order - rankA.order;
-            if (rankB.divisionOrder !== rankA.divisionOrder) return rankB.divisionOrder - rankA.divisionOrder;
-            return (rankB.lp || 0) - (rankA.lp || 0);
-        });
+        sortPlayersByRank(rows);
 
         const embed = new EmbedBuilder()
             .setTitle("📋 Comptes surveillés")
@@ -45,11 +35,10 @@ module.exports = {
             const row = rows[i];
             try {
                 const rankEmoji = getRankEmoji(row.last_rank);
-                const riotIdFormatted = row.riot_id.replace('#', '-').replace(/ /g, '%20');
-                const dpmLink = `[DPM](https://dpm.lol/${riotIdFormatted})`;
+                const dpmLink = `[DPM](${getDpmUrl(row.riot_id)})`;
 
                 description += `**${i + 1}.** ${row.riot_id} ${dpmLink}\n`;
-                description += `└ ${rankEmoji} ${row.last_rank || "Non classé"} (${row.last_lp || 0} LP)\n\n`;
+                description += `└ ${rankEmoji} ${row.last_rank || "UNRANKED"} (${row.last_lp || 0} LP)\n\n`;
 
             } catch (error) {
                 logger.warn('COMMAND', `Erreur affichage joueur dans /list : ${row.riot_id}`, {
@@ -60,7 +49,7 @@ module.exports = {
                 const rankEmoji = getRankEmoji(row.last_rank);
                 description += `**${i + 1}.** ${row.riot_id}\n`;
                 description += `└ ⚠️ Utilisateur/Channel introuvable\n`;
-                description += `└ ${rankEmoji} ${row.last_rank || "Non classé"} (${row.last_lp || 0} LP)\n\n`;
+                description += `└ ${rankEmoji} ${row.last_rank || "UNRANKED"} (${row.last_lp || 0} LP)\n\n`;
             }
         }
 

@@ -1,12 +1,7 @@
 const { SlashCommandBuilder } = require("discord.js");
 const logger = require("../utils/loggers");
-const {
-    getLinkedPlayer,
-    getPlayerByRiotId,
-    getPlayerMatches,
-    createHistoryEmbedWithColors,
-} = require("../utils/historyUtils");
-const { autocomplete } = require("./stats");
+const { getPlayerMatches, createHistoryEmbedWithColors } = require("../utils/historyUtils");
+const { getLinkedPlayer, getPlayerByRiotId, autocompletePlayers } = require("../utils/playerUtils");
 
 // ─────────────────────────────────────────
 //  COMMANDE
@@ -97,5 +92,5 @@ module.exports = {
         }
     },
 
-    autocomplete,
+    autocomplete: autocompletePlayers,
 };

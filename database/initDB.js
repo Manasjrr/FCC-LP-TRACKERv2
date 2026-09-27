@@ -153,6 +153,22 @@ function runMigrations(db) {
         `).run();
         console.log(`Migration : colonne is_remake ajoutée à match_history (${changes} remake(s) détecté(s))`);
     }
+
+    // Migration 4 — Harmonisation du rang non classé ("Non classé" → "UNRANKED")
+    // Évite une fausse notification de changement de rang ("Non classé" ≠ "UNRANKED")
+    const unrankedPlayers = db.prepare(`
+        UPDATE players SET last_rank = 'UNRANKED' WHERE last_rank = 'Non classé'
+    `).run().changes;
+    const unrankedMatches = db.prepare(`
+        UPDATE match_history
+        SET rank_before = CASE WHEN rank_before = 'Non classé' THEN 'UNRANKED' ELSE rank_before END,
+            rank_after  = CASE WHEN rank_after  = 'Non classé' THEN 'UNRANKED' ELSE rank_after  END
+        WHERE rank_before = 'Non classé' OR rank_after = 'Non classé'
+    `).run().changes;
+
+    if (unrankedPlayers || unrankedMatches) {
+        console.log(`Migration : "Non classé" → "UNRANKED" (${unrankedPlayers} joueur(s), ${unrankedMatches} match(s))`);
+    }
 }
 
 module.exports = { initDB, runMigrations };

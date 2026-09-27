@@ -37,6 +37,8 @@ It automatically detects new matches, posts win/loss alerts in designated channe
 - 📜 **Match history** — display the last N ranked games for any tracked player (up to 25)
 - ➕ **Player management** — add, remove, list and clear tracked accounts per server
 - 🔗 **Account linking** — link a Discord user to their League of Legends account
+- 👥 **Duo detection** — tracked players in the same game are grouped into a single notification (with their roles)
+- ⚪ **Remake detection** — games under 5 min with no LP change are flagged as remakes and excluded from stats and weekly recap
 
 ---
 
@@ -50,42 +52,44 @@ FCC-LP-TRACKERv2/
 │
 ├── cache/
 │   ├── matchCache.js     # In-memory cache for match data (reduces API calls)
-│   ├── timelineCache.js  # Cache for match timelines (heavy API endpoint optimization)
+│   └── timelineCache.js  # Cache for match timelines (heavy API endpoint optimization)
 │
 ├── commands/
-│   ├── add.js        # Add a player to monitoring
-│   ├── remove.js     # Remove a tracked player
-│   ├── list.js       # List all monitored players
-│   ├── stats.js      # Detailed stats for a player
-│   ├── history.js    # Match history for a player
-│   ├── link.js       # Link Discord to LoL account
-│   ├── ingame.js       # Show current player in games
-│   └── clear.js      # Delete messages (Admin/Owner only)
-│   └── help.js      # Show the commands documentation
+│   ├── add.js          # Add a player to monitoring
+│   ├── remove.js       # Remove a tracked player
+│   ├── list.js         # List all monitored players
+│   ├── stats.js        # Detailed stats for a player
+│   ├── history.js      # Match history for a player
+│   ├── link.js         # Link Discord to LoL account
+│   ├── ingame.js       # Show tracked players currently in game
+│   ├── clear.js        # Delete messages (Admin/Owner only)
+│   ├── force-recap.js  # Force the weekly recap (Owner only)
+│   └── help.js         # Show the commands documentation
 │
 ├── database/
-│   ├── initDB.js     # Database schema creation + indexes (players, matches, links)
+│   └── initDB.js     # Database schema creation + indexes + migrations
 │
 ├── embeds/
 │   ├── detailedStatsEmbed.js # Build advanced match stats embed (timeline + comparisons)
-│   ├── matchEmbed.js         # Build win/loss + LP change notification embeds
-│ 
+│   └── matchEmbed.js         # Match notifications (solo, duo/group, remake) + rank change embeds
+│
 ├── handlers/
 │   ├── commandHandler.js      # Load + deploy slash commands dynamically
-│   ├── interactionHandler.js  # Central router for commands, buttons, and modals
+│   └── interactionHandler.js  # Central router for commands, buttons, and modals
 │
-│ 
 ├── services/
-│   ├── matchService.js       # Core match processing (LP calc, DB insert, timeline cache)
-│   ├── monitoringService.js  # Main loop — detects new matches and sends notifications
-│   ├── riotApiService.js     # Riot API wrapper (retry, rate limit handling, endpoints)
+│   ├── matchService.js       # Core match processing (LP calc, remake detection, DB insert)
+│   ├── monitoringService.js  # Main loop — detects new matches and sends (grouped) notifications
+│   └── riotApiService.js     # Riot API wrapper (retry, rate limit handling, endpoints)
 │
 └── utils/
-    ├── rankUtils.js    # Rank emoji and ordering helpers
-    ├── graphUtils.js   # LP graph generation (Canvas)
-    ├── weeklyRecap.js  # Weekly recap builder and sender
-    ├── historyUtils.js # Match history embed builder
-    └── loggers.js      # Console and file logger
+    ├── playerUtils.js    # Player lookups, server ranking, DPM links, shared autocomplete
+    ├── rankUtils.js      # Rank emoji and ordering helpers
+    ├── championUtils.js  # Champion names / ids / icons
+    ├── graphUtils.js     # LP graph generation (Canvas)
+    ├── weeklyRecap.js    # Weekly recap builder and sender
+    ├── historyUtils.js   # Match history embed builder
+    └── loggers.js        # Console and file logger
 ```
 ---
 

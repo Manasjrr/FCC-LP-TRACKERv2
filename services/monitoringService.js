@@ -1,16 +1,15 @@
-const { EmbedBuilder } = require("discord.js");
-const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
+const axios = require("axios");
 const { getRecentMatchIds } = require("./riotApiService");
 const { processNewMatch, fetchAndCacheTimeline } = require("./matchService");
-const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed } = require("../embeds/matchEmbed");
+const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildRankChangeEmbed } = require("../embeds/matchEmbed");
+const { getServerPosition } = require("../utils/playerUtils");
 const logger = require("../utils/loggers");
 
-
+// ─── Version du patch (Data Dragon) ───────────────────────────────────────────
 let patchVersion = "15.10.1"; // fallback
 
 async function updatePatchVersion() {
     try {
-        const axios = require("axios");
         const res = await axios.get("https://ddragon.leagueoflegends.com/api/versions.json", { timeout: 5000 });
         patchVersion = res.data[0];
         logger.info("MONITOR", `Version patch mise à jour : ${patchVersion}`);
@@ -28,20 +27,7 @@ setInterval(updatePatchVersion, 24 * 60 * 60 * 1000);
 
 // ─── Notification changement de rang ─────────────────────────────────────────
 async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP, channel) {
-    const oldRankData = getRankOrder(oldRank, oldLP);
-    const newRankData = getRankOrder(newRank, newLP);
-    const rankUp = newRankData.totalScore > oldRankData.totalScore;
-
-    const embed = new EmbedBuilder()
-        .setTitle(rankUp ? "📈 PROMOTION !" : "📉 RÉTROGRADATION")
-        .setDescription(`**${player.riot_id}** a changé de rang !`)
-        .addFields(
-            { name: "Ancien rang", value: `${getRankEmoji(oldRank)} ${oldRank}`, inline: true },
-            { name: "Nouveau rang", value: `${getRankEmoji(newRank)} ${newRank}`, inline: true }
-        )
-        .setColor(rankUp ? "#00FF00" : "#FF0000")
-        .setTimestamp();
-
+    const embed = buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP);
     await channel.send({ embeds: [embed] });
 }
 
@@ -66,8 +52,6 @@ async function checkPlayerNewMatches(player, guildEntries, pendingNotifications)
     logger.info("MONITOR", `${newMatchIds.length} nouveau(x) match(s) pour ${player.riot_id}`, {
         matches: newMatchIds,
     });
-
-
 
     let currentPlayer = player;
 
@@ -148,26 +132,13 @@ async function sendPendingNotifications(client, pendingNotifications) {
                     players: entries.map((e) => e.player.riot_id),
                 });
             } else {
-                const { player, result, positionBefore, positionAfter } = entries[0];
+                const entry = entries[0];
 
                 // Coéquipiers / adversaires suivis détectés hors de ce cycle
                 const trackedMates = getTrackedPlayersInMatch(match, guildId)
-                    .filter((m) => m.id !== player.id);
+                    .filter((m) => m.id !== entry.player.id);
 
-                const { embed, row } = buildMatchNotifEmbed(
-                    player,
-                    result.participant,
-                    match,
-                    result.currentRank,
-                    result.currentLP,
-                    result.finalLpChange,
-                    matchId,
-                    patchVersion,
-                    positionBefore,
-                    positionAfter,
-                    result.isRemake,
-                    trackedMates
-                );
+                const { embed, row } = buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates);
                 await channel.send({ embeds: [embed], components: [row] });
             }
 
@@ -177,7 +148,7 @@ async function sendPendingNotifications(client, pendingNotifications) {
                         player,
                         result.oldRank,
                         result.currentRank,
-                        player.last_lp,
+                        result.oldLP,
                         result.currentLP,
                         channel
                     );
@@ -245,25 +216,4 @@ async function checkAllPlayers(client) {
     });
 }
 
-function getServerPosition(riotId, guildId) {
-    const rows = global.db.prepare(`
-        SELECT p.riot_id, p.last_rank, p.last_lp FROM players p
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE pg.guild_id = ? AND pg.active = 1
-    `).all(guildId);
-
-    if (!rows?.length) return { position: 0, total: 0 };
-
-    rows.sort((a, b) => {
-        const rA = getRankOrder(a.last_rank, a.last_lp);
-        const rB = getRankOrder(b.last_rank, b.last_lp);
-        if (rB.order !== rA.order) return rB.order - rA.order;
-        if (rB.divisionOrder !== rA.divisionOrder) return rB.divisionOrder - rA.divisionOrder;
-        return (rB.lp || 0) - (rA.lp || 0);
-    });
-
-    const position = rows.findIndex((p) => p.riot_id === riotId) + 1;
-    return { position, total: rows.length };
-}
-
-module.exports = { checkAllPlayers, sendRankChangeNotification, getServerPosition, getPatchVersion};
+module.exports = { checkAllPlayers, sendRankChangeNotification, getPatchVersion };

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { sendWeeklyRecap } = require('../utils/weeklyRecap');
 const logger = require('../utils/loggers');
 
@@ -17,11 +17,11 @@ module.exports = {
             });
             return interaction.reply({
                 content: "Cette commande est réservée au propriétaire du bot.",
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
         }
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             logger.info('COMMAND', `Force recap demandé par ${interaction.user.tag}`);

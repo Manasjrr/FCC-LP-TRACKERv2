@@ -1,38 +1,4 @@
-// utils/playerUtils.js
-
-function getPlayerById(playerId) {
-    return global.db.prepare(`SELECT * FROM players WHERE id = ?`).get(playerId);
-}
-
-// Joueur lié au compte Discord (actif sur le serveur)
-function getLinkedPlayer(userId, guildId) {
-    return global.db.prepare(`
-        SELECT p.* FROM players p
-        JOIN user_links ul ON p.id = ul.player_id
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE ul.user_id = ? AND ul.guild_id = ? AND pg.guild_id = ? AND pg.active = 1
-    `).get(userId, guildId, guildId) ?? null;
-}
-
-// Joueur par Riot ID (exact, puis recherche partielle)
-function getPlayerByRiotId(riotId, guildId) {
-    let player = global.db.prepare(`
-        SELECT p.* FROM players p
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE pg.guild_id = ? AND pg.active = 1 AND p.riot_id = ?
-    `).get(guildId, riotId);
-
-    if (player) return player;
-
-    player = global.db.prepare(`
-        SELECT p.* FROM players p
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE pg.guild_id = ? AND pg.active = 1 AND LOWER(p.riot_id) LIKE LOWER(?)
-        LIMIT 1
-    `).get(guildId, `%${riotId}%`);
-
-    return player ?? null;
-}
+const { EmbedBuilder } = require("discord.js");
 
 // Fonction pour récupérer les matchs d'un joueur
 function getPlayerMatches(playerId, limit = 20) {
@@ -73,7 +39,6 @@ function createHistoryEmbedWithColors(player, matches, requestedCount) {
     else if (winrate >= 20) embedColor = 0xff4500;  // 🔴 Rouge-orange
     else embedColor = 0xff0000;                     // 🔴 Rouge
 
-    const { EmbedBuilder } = require('discord.js');
     const embed = new EmbedBuilder()
         .setColor(embedColor)
         .setTitle(`📜 Historique de ${player.riot_id}`)
@@ -145,9 +110,6 @@ function createHistoryEmbedWithColors(player, matches, requestedCount) {
 
 
 module.exports = {
-    getPlayerById,
-    getLinkedPlayer,
-    getPlayerByRiotId,
     getPlayerMatches,
     createHistoryEmbedWithColors,
     getTimeAgo

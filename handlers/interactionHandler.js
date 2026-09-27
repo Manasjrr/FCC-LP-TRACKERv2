@@ -1,9 +1,11 @@
-const { AttachmentBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require("discord.js");
 const { generateLPGraph } = require("../utils/graphUtils");
-const { getPlayerById, getPlayerMatches, createHistoryEmbedWithColors } = require("../utils/historyUtils");
+const { getPlayerMatches, createHistoryEmbedWithColors } = require("../utils/historyUtils");
+const { getPlayerById } = require("../utils/playerUtils");
 const { buildDetailedStatsEmbed } = require("../embeds/detailedStatsEmbed");
 const { getMatch, getTimeline } = require("../services/riotApiService");
 const matchCache = require("../cache/matchCache");
+const timelineCache = require("../cache/timelineCache");
 const logger = require("../utils/loggers");
 const axios = require("axios");
 const FormData = require("form-data");
@@ -21,23 +23,6 @@ async function handleInteraction(interaction) {
     }
     if (interaction.isModalSubmit()) {
         return handleModal(interaction);
-    }
-}
-
-async function editReplyWithRetry(interaction, payload, retries = 2) {
-    for (let i = 0; i <= retries; i++) {
-        try {
-            return await interaction.editReply(payload);
-        } catch (error) {
-            const isSocketError = error.code === 'UND_ERR_SOCKET'
-                || error.message?.includes('other side closed');
-            if (isSocketError && i < retries) {
-                logger.warn("HANDLER", `Retry editReply (${i + 1}/${retries}) après erreur socket`);
-                await new Promise(r => setTimeout(r, 500 * (i + 1)));
-                continue;
-            }
-            throw error;
-        }
     }
 }
 
@@ -113,27 +98,27 @@ async function handleButton(interaction) {
 
         // Refresh
         if (customId === "refresh_stats") {
-            await interaction.deferReply({ flags: 64 });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
             return interaction.followUp({
                 content: "🔄 **Cache actualisé !**\nRelance `/stats` pour voir les nouvelles données.",
-                flags: 64,
+                flags: MessageFlags.Ephemeral,
             });
         }
 
         // Comparer
         if (customId === "compare_rank") {
-            await interaction.deferReply({ flags: 64 });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
             return interaction.followUp({
                 content: "🏆 **Comparaison à venir !**",
-                flags: 64,
+                flags: MessageFlags.Ephemeral,
             });
         }
 
         // Inconnu
-        await interaction.deferReply({ flags: 64 });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         return interaction.followUp({
             content: `❓ Bouton non reconnu : ${customId}`,
-            flags: 64,
+            flags: MessageFlags.Ephemeral,
         });
 
     } catch (error) {
@@ -142,9 +127,9 @@ async function handleButton(interaction) {
         });
         try {
             if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ content: "❌ Erreur survenue", flags: 64 });
+                await interaction.reply({ content: "❌ Erreur survenue", flags: MessageFlags.Ephemeral });
             } else {
-                await interaction.followUp({ content: "❌ Erreur survenue", flags: 64 });
+                await interaction.followUp({ content: "❌ Erreur survenue", flags: MessageFlags.Ephemeral });
             }
         } catch (e) {
             logger.error("HANDLER", "Erreur finale bouton", { error: e.message });
@@ -200,9 +185,37 @@ async function handleMatchHistoryButton(interaction) {
     await interaction.showModal(modal);
 }
 
+// ─── Match + timeline (cache en priorité) → embed stats détaillées ───────────
+async function getDetailedStatsEmbed(matchId, puuid, userTag) {
+    let matchInfo = matchCache.getMatch(matchId);
+
+    if (!matchInfo) {
+        try {
+            const match = await getMatch(matchId);
+            matchInfo = match.info;
+            matchCache.setMatch(matchId, matchInfo);
+        } catch (error) {
+            logger.warn("HANDLER", `Match introuvable`, { matchId });
+            return null;
+        }
+    }
+
+    let timeline = timelineCache.getTimeline(matchId);
+    if (!timeline) {
+        try {
+            timeline = await getTimeline(matchId);
+            timelineCache.setTimeline(matchId, timeline);
+        } catch (error) {
+            logger.warn("HANDLER", `Timeline indisponible pour ${matchId}`, { error: error.message });
+        }
+    }
+
+    return buildDetailedStatsEmbed(matchInfo, puuid, timeline, userTag);
+}
+
 // ─── Stats détaillées ─────────────────────────────────────────────────────────
 async function handleDetailedStats(interaction) {
-    await interaction.deferReply({ flags: 64 });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const parts = interaction.customId.split("|");
     const matchId = parts[1];
@@ -215,27 +228,10 @@ async function handleDetailedStats(interaction) {
         channel: interaction.channelId,
     });
 
-    let matchInfo = matchCache.getMatch(matchId);
-
-    if (!matchInfo) {
-        try {
-            const match = await getMatch(matchId);
-            matchInfo = match.info;
-            matchCache.setMatch(matchId, matchInfo);
-        } catch (error) {
-            logger.warn("HANDLER", `Match introuvable`, { matchId });
-            return interaction.editReply({ content: "❌ Les données du match sont introuvables." });
-        }
+    const embed = await getDetailedStatsEmbed(matchId, puuid, interaction.user.tag);
+    if (!embed) {
+        return interaction.editReply({ content: "❌ Les données du match sont introuvables." });
     }
-
-    let timeline = null;
-    try {
-        timeline = await getTimeline(matchId);
-    } catch (error) {
-        logger.warn("HANDLER", `Timeline indisponible pour ${matchId}`, { error: error.message });
-    }
-
-    const embed = buildDetailedStatsEmbed(matchInfo, puuid, timeline, interaction.user.tag);
 
     const shareButton = new ButtonBuilder()
         .setCustomId(`share|${matchId}|${puuid}`)
@@ -250,33 +246,16 @@ async function handleDetailedStats(interaction) {
 
 // ─── Partager ─────────────────────────────────────────────────────────────────
 async function handleShare(interaction) {
-    await interaction.deferReply({ ephemeral: false });
+    await interaction.deferReply();
 
     const parts = interaction.customId.split("|");
     const matchId = parts[1];
     const puuid = parts[2];
 
-    let matchInfo = matchCache.getMatch(matchId);
-
-    if (!matchInfo) {
-        try {
-            const match = await getMatch(matchId);
-            matchInfo = match.info;
-            matchCache.setMatch(matchId, matchInfo);
-        } catch (error) {
-            logger.warn("HANDLER", `Match introuvable`, { matchId });
-            return interaction.editReply({ content: "❌ Les données du match sont introuvables." });
-        }
+    const embed = await getDetailedStatsEmbed(matchId, puuid, interaction.user.tag);
+    if (!embed) {
+        return interaction.editReply({ content: "❌ Les données du match sont introuvables." });
     }
-
-    let timeline = null;
-    try {
-        timeline = await getTimeline(matchId);
-    } catch (error) {
-        logger.warn("HANDLER", `Timeline indisponible pour ${matchId}`, { error: error.message });
-    }
-
-    const embed = buildDetailedStatsEmbed(matchInfo, puuid, timeline, interaction.user.tag);
     await interaction.editReply({ embeds: [embed] });
 }
 
@@ -293,7 +272,7 @@ async function handleModal(interaction) {
         matchCount = 25;
         await interaction.reply({
             content: `⚠️ Limite dépassée ! Affichage de **25 matchs** maximum.`,
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
         });
     } else {
         matchCount = Math.max(1, matchCount);
@@ -305,7 +284,7 @@ async function handleModal(interaction) {
         if (!player) {
             const content = `❌ Joueur introuvable (ID: ${playerId})`;
             return isOverLimit
-                ? interaction.followUp({ content, ephemeral: true })
+                ? interaction.followUp({ content, flags: MessageFlags.Ephemeral })
                 : interaction.editReply(content);
         }
 
@@ -313,7 +292,7 @@ async function handleModal(interaction) {
         if (!matches.length) {
             const content = "❌ Aucun match trouvé.";
             return isOverLimit
-                ? interaction.followUp({ content, ephemeral: true })
+                ? interaction.followUp({ content, flags: MessageFlags.Ephemeral })
                 : interaction.editReply(content);
         }
 
@@ -329,11 +308,11 @@ async function handleModal(interaction) {
         const content = "❌ Erreur lors de la récupération de l'historique.";
         try {
             if (interaction.replied) {
-                await interaction.followUp({ content, ephemeral: true });
+                await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
             } else if (interaction.deferred) {
                 await interaction.editReply(content);
             } else {
-                await interaction.reply({ content, ephemeral: true });
+                await interaction.reply({ content, flags: MessageFlags.Ephemeral });
             }
         } catch (e) {
             logger.error("HANDLER", "Erreur finale modal", { error: e.message });
@@ -341,4 +320,4 @@ async function handleModal(interaction) {
     }
 }
 
-module.exports = { handleInteraction, handleInteraction };
+module.exports = { handleInteraction };

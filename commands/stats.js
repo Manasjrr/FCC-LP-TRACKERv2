@@ -5,13 +5,18 @@ const {
     ButtonBuilder,
     ButtonStyle,
 } = require("discord.js");
-const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
-const axios = require("axios");
+const { getRankEmoji } = require("../utils/rankUtils");
 const logger = require("../utils/loggers");
 const { getSummonerByPuuid, getSoloQData, getChampionMasteries } = require("../services/riotApiService");
 const { getPatchVersion } = require("../services/monitoringService");
-const { getChampionIdByName } = require("../utils/championUtils")
-const { getLinkedPlayer, getPlayerByRiotId } = require("../utils/historyUtils");
+const { getChampionIdByName } = require("../utils/championUtils");
+const {
+    getLinkedPlayer,
+    getPlayerByRiotId,
+    getServerPosition,
+    formatRiotIdForUrl,
+    autocompletePlayers,
+} = require("../utils/playerUtils");
 
 // ─────────────────────────────────────────
 //  CACHE
@@ -136,56 +141,8 @@ module.exports = {
         }
     },
 
-    async autocomplete(interaction) {
-        const focusedValue = interaction.options.getFocused().toLowerCase();
-        const guildId = interaction.guildId;
-
-        if (!global.db) return interaction.respond([]);
-
-        const rows = global.db.prepare(`
-        SELECT DISTINCT p.riot_id FROM players p
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE pg.guild_id = ? AND pg.active = 1
-    `).all(guildId);
-
-        const filtered = rows
-            .filter((r) => r.riot_id.toLowerCase().includes(focusedValue))
-            .slice(0, 25);
-
-        await interaction.respond(
-            filtered.map((r) => ({ name: r.riot_id, value: r.riot_id }))
-        );
-    },
-
+    autocomplete: autocompletePlayers,
 };
-
-// ─────────────────────────────────────────
-//  RÉCUPÉRATION DES JOUEURS (DB)
-// ─────────────────────────────────────────
-
-function getServerPosition(targetRiotId, guildId) {
-    const rows = global.db.prepare(`
-        SELECT p.riot_id, p.last_rank, p.last_lp FROM players p
-        JOIN player_guilds pg ON pg.player_id = p.id
-        WHERE pg.guild_id = ? AND pg.active = 1
-    `).all(guildId);
-
-    if (!rows?.length) return { position: 0, total: 0, percentile: 0 };
-
-    rows.sort((a, b) => {
-        const rA = getRankOrder(a.last_rank, a.last_lp);
-        const rB = getRankOrder(b.last_rank, b.last_lp);
-        if (rB.order !== rA.order) return rB.order - rA.order;
-        if (rB.divisionOrder !== rA.divisionOrder) return rB.divisionOrder - rA.divisionOrder;
-        return (rB.lp || 0) - (rA.lp || 0);
-    });
-
-    const position = rows.findIndex((p) => p.riot_id === targetRiotId) + 1;
-    const total = rows.length;
-    const percentile = total > 0 ? Math.round((position / total) * 100) : 0;
-
-    return { position, total, percentile };
-}
 
 // ─────────────────────────────────────────
 //  API RIOT — STATS RANKED
@@ -491,7 +448,7 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
     const rankEmoji = getRankEmoji(stats.currentRank);
     const performance = analysis.performanceLevel;
 
-    const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
+    const riotIdFormatted = formatRiotIdForUrl(player.riot_id);
     const links = [
         `[DPM](https://dpm.lol/${riotIdFormatted})`,
         `[OP.GG](https://www.op.gg/summoners/euw/${riotIdFormatted})`,

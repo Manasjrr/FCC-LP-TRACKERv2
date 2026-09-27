@@ -218,6 +218,7 @@ async function processNewMatch(player, matchId, isLatest = false) {
         currentLP,
         finalLpChange,
         oldRank,
+        oldLP,
         isRemake,
         gameAge,
         isRecent: gameAge <= LIMIT_7J,

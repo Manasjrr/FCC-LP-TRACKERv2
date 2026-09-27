@@ -6,7 +6,7 @@ const logger = require("./utils/loggers");
 
 // ─── Services & Handlers ──────────────────────────────────────────────────────
 const { initDB } = require("./database/initDB");
-const { loadCommands, deployCommands } = require("./handlers/commandHandler");
+const { loadCommands, deployCommands, deployToNewGuild } = require("./handlers/commandHandler");
 const { handleInteraction } = require("./handlers/interactionHandler");
 const { checkAllPlayers } = require("./services/monitoringService");
 const { checkApiStatus } = require("./services/riotApiService");
@@ -79,7 +79,7 @@ client.once("ready", async () => {
 // Nouveau serveur → déploiement automatique
 client.on("guildCreate", async (guild) => {
     logger.info("BOOT", `Nouveau serveur : ${guild.name} (${guild.id})`);
-    await deployCommands(client, guild.id);
+    await deployToNewGuild(client, guild);
 });
 
 // Toutes les interactions

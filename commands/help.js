@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require("discord.js");
 const logger = require("../utils/loggers");
 
 const DOCS_URL = "https://ambessabot.reisrodrigo.com/pages/commands.html";
@@ -14,7 +14,7 @@ const COMMANDS_INFO = [
         name: "/remove",
         emoji: "🗑️",
         description: "Retirer un compte du monitoring",
-        usage: "/remove numero: 1",
+        usage: "/remove joueur: Pseudo#TAG",
     },
     {
         name: "/list",
@@ -26,7 +26,7 @@ const COMMANDS_INFO = [
         name: "/stats",
         emoji: "📊",
         description: "Statistiques détaillées d'un joueur avec analyse de performance",
-        usage: "/stats [rang: 1]",
+        usage: "/stats [joueur: Pseudo#TAG]",
     },
     {
         name: "/history",
@@ -37,13 +37,13 @@ const COMMANDS_INFO = [
     {
         name: "/link",
         emoji: "🔗",
-        description: "Lier ton compte Discord à un joueur suivi pour utiliser /stats sans argument",
-        usage: "/link [numero: 1]",
+        description: "Lier ton compte Discord à un joueur suivi pour utiliser /stats et /history sans argument",
+        usage: "/link [joueur: Pseudo#TAG]",
     },
-        {
+    {
         name: "/ingame",
         emoji: "🎥",
-        description: "Affiche toute les comptes surveillées actuellement in-game",
+        description: "Affiche tous les comptes surveillés actuellement en partie",
         usage: "/ingame",
     },
 ];
@@ -54,7 +54,7 @@ module.exports = {
         .setDescription("Affiche la documentation et la liste des commandes disponibles"),
 
     async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         logger.info("COMMAND", `/help exécuté par ${interaction.user.tag}`, {
             guild: interaction.guildId,

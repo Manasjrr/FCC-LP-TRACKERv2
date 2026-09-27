@@ -3,6 +3,7 @@ const { getActiveGame } = require("../services/riotApiService");
 const { getRankEmoji } = require("../utils/rankUtils");
 const { getChampionName } = require("../utils/championUtils");
 const logger = require("../utils/loggers");
+const { getGuildPlayers, getDpmUrl } = require("../utils/playerUtils");
 
 // ─── Maps utilitaires ─────────────────────────────────────────────────────────
 const QUEUE_NAMES = {
@@ -408,11 +409,7 @@ module.exports = {
         });
 
         // ── Récupérer les joueurs actifs sur ce serveur ───────────────────────
-        const players = global.db.prepare(`
-            SELECT p.* FROM players p
-            JOIN player_guilds pg ON pg.player_id = p.id
-            WHERE pg.guild_id = ? AND pg.active = 1
-        `).all(interaction.guildId);
+        const players = getGuildPlayers(interaction.guildId);
 
         if (!players?.length) {
             return interaction.editReply("📭 Aucun compte surveillé sur ce serveur.");
@@ -511,14 +508,13 @@ module.exports = {
                 ? "🔜 En chargement..."
                 : `⏱️ ${formatDuration(rawSeconds)}`;
 
-            const riotIdFormatted = player.riot_id.replace("#", "-").replace(/ /g, "%20");
-            const dpmUrl = `https://dpm.lol/${riotIdFormatted}`;
+            const dpmUrl = getDpmUrl(player.riot_id);
 
             const { wrLine, streakLine } = getPlayerRecentStats(player.id);
 
             const lines = [
                 `🔗 [Voir sur DPM](${dpmUrl})`,
-                `${rankEmoji} **${player.last_rank ?? "Non classé"}** (${player.last_lp ?? 0} LP)`,
+                `${rankEmoji} **${player.last_rank || "UNRANKED"}** (${player.last_lp ?? 0} LP)`,
                 `${roleEmoji} **${roleLabel}** · 🏆 **${championName}**`,
                 `🎯 **${queueName}** · ${durationLabel}`,
             ];

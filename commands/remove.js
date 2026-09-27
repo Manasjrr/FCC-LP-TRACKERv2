@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const logger = require("../utils/loggers");
+const { autocompletePlayers } = require("../utils/playerUtils");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -96,24 +97,5 @@ module.exports = {
         }
     },
 
-    async autocomplete(interaction) {
-        const focusedValue = interaction.options.getFocused().toLowerCase();
-        const guildId = interaction.guildId;
-
-        if (!global.db) return interaction.respond([]);
-
-        const rows = global.db.prepare(`
-            SELECT DISTINCT p.riot_id FROM players p
-            JOIN player_guilds pg ON pg.player_id = p.id
-            WHERE pg.guild_id = ? AND pg.active = 1
-        `).all(guildId);
-
-        const filtered = rows
-            .filter((r) => r.riot_id.toLowerCase().includes(focusedValue))
-            .slice(0, 25);
-
-        await interaction.respond(
-            filtered.map((r) => ({ name: r.riot_id, value: r.riot_id }))
-        );
-    },
+    autocomplete: autocompletePlayers,
 };
