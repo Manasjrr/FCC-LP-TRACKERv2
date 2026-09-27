@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const { getRankEmoji } = require("../utils/rankUtils");
 const logger = require("../utils/loggers");
 const { getGuildPlayers, sortPlayersByRank, getDpmUrl } = require("../utils/playerUtils");
+const { computePlayerRating } = require("../utils/ratingUtils");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -36,9 +37,13 @@ module.exports = {
             try {
                 const rankEmoji = getRankEmoji(row.last_rank);
                 const dpmLink = `[DPM](${getDpmUrl(row.riot_id)})`;
+                const rating = computePlayerRating(row.id);
+                const ratingText = rating.empty
+                    ? ""
+                    : ` • **${rating.score}/100** (${rating.tier.grade})${rating.provisional ? " *prov.*" : ""}`;
 
                 description += `**${i + 1}.** ${row.riot_id} ${dpmLink}\n`;
-                description += `└ ${rankEmoji} ${row.last_rank || "UNRANKED"} (${row.last_lp || 0} LP)\n\n`;
+                description += `└ ${rankEmoji} ${row.last_rank || "UNRANKED"} (${row.last_lp || 0} LP)${ratingText}\n\n`;
 
             } catch (error) {
                 logger.warn('COMMAND', `Erreur affichage joueur dans /list : ${row.riot_id}`, {

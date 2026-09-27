@@ -48,7 +48,7 @@ function buildRatingEmbed(player, rating, ranking) {
 
     // ── Résultats & forme ─────────────────────────────────────────────────────
     const avgLpText = `${results.avgLp >= 0 ? "+" : ""}${results.avgLp.toFixed(1)}`;
-    const last5Text = form.last5.map((w) => (w ? "🟢" : "🔴")).join("");
+    const lastGamesText = form.lastGames.map((w) => (w ? "🟢" : "🔴")).join("");
     const streakText = form.streak >= 2
         ? `${form.streakType === "win" ? "🔥" : "💀"} ${form.streak} ${form.streakType === "win" ? "victoires" : "défaites"} d'affilée`
         : "➖ Pas de série";
@@ -77,7 +77,10 @@ function buildRatingEmbed(player, rating, ranking) {
             },
             {
                 name: `🔥 Forme — ${pts(form.points, form.max)}`,
-                value: `${last5Text}\n${streakText}`,
+                value:
+                    `${lastGamesText}\n` +
+                    `**${Math.round(form.winrate * 100)}%** sur les ${form.lastGames.length} dernières\n` +
+                    streakText,
                 inline: true,
             }
         )
