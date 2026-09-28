@@ -375,7 +375,7 @@ function getPlayerRecentStats(playerId) {
 
     const total = matches.length;
     const wins = matches.filter((m) => m.win).length;
-    const wrLine = `📊 **${Math.round((wins / total) * 100)}%** WR · ${wins}W ${total - wins}L`;
+    const wrLine = `📊 **${Math.round((wins / total) * 100)}%** WR (${wins}V ${total - wins}D)`;
 
     let streakLine = null;
     if (matches.length >= 2) {
@@ -387,12 +387,163 @@ function getPlayerRecentStats(playerId) {
         }
         if (count >= 2) {
             streakLine = first
-                ? `🔥 **${count} victoires** consécutives`
-                : `💀 **${count} défaites** consécutives`;
+                ? `🔥 ${count} victoires d'affilée`
+                : `💀 ${count} défaites d'affilée`;
         }
     }
 
     return { wrLine, streakLine };
+}
+
+// ─── Affichage par partie ─────────────────────────────────────────────────────
+const ROLE_LABELS = {
+    TOP: "Top",
+    JUNGLE: "Jungle",
+    MID: "Mid",
+    ADC: "ADC",
+    SUPPORT: "Support",
+    NONE: "Rôle inconnu",
+};
+
+const TEAM_LABELS = {
+    100: "🔵 Côté bleu",
+    200: "🔴 Côté rouge",
+};
+
+const GAME_COLORS = {
+    solo: 0x00bfff,
+    group: 0x2ecc71,
+    versus: 0xe74c3c,
+};
+
+const FIELD_VALUE_MAX = 1024;
+const MESSAGE_EMBEDS_MAX = 10;
+const MESSAGE_CHARS_MAX = 5500; // marge sous la limite Discord de 6000 caractères
+
+function truncate(text, max) {
+    return text.length <= max ? text : text.slice(0, max - 1) + "…";
+}
+
+// Regroupe les joueurs suivis par partie (tous ceux présents dans la partie,
+// même si leur propre appel API a échoué)
+function groupByGame(inGame, playersByPuuid) {
+    const games = new Map();
+
+    for (const { gameData } of inGame) {
+        if (games.has(gameData.gameId)) continue;
+
+        const roleAssignments = assignRolesForGame(gameData.participants ?? []);
+        const members = (gameData.participants ?? [])
+            .filter((p) => playersByPuuid.has(p.puuid))
+            .map((participant) => ({
+                player: playersByPuuid.get(participant.puuid),
+                participant,
+                role: roleAssignments[participant.puuid] ?? "NONE",
+            }))
+            .sort((a, b) => ROLES.indexOf(a.role) - ROLES.indexOf(b.role));
+
+        games.set(gameData.gameId, { gameData, members });
+    }
+
+    // Parties à plusieurs en premier
+    return [...games.values()].sort((a, b) => b.members.length - a.members.length);
+}
+
+// Lignes d'un joueur (sans son nom)
+function buildPlayerLines({ player, participant, role }) {
+    const roleEmoji = ROLE_EMOJIS[role] ?? ROLE_EMOJIS.NONE;
+    const championName = getChampionName(participant.championId);
+    const { wrLine, streakLine } = getPlayerRecentStats(player.id);
+
+    const lines = [
+        `${roleEmoji} **${championName}** · ${ROLE_LABELS[role] ?? ROLE_LABELS.NONE}`,
+        `${getRankEmoji(player.last_rank)} ${player.last_rank || "UNRANKED"} · ${player.last_lp ?? 0} LP`,
+    ];
+    const statsLine = [wrLine, streakLine].filter(Boolean).join(" · ");
+    if (statsLine) lines.push(statsLine);
+
+    return lines;
+}
+
+function buildGameEmbed({ gameData, members }) {
+    const queueName = QUEUE_NAMES[gameData.gameQueueConfigId] ?? `Queue ${gameData.gameQueueConfigId}`;
+    const rawSeconds = Math.max(0, Math.floor(gameData.gameLength ?? 0));
+    const durationLabel = rawSeconds < 60
+        ? "🔜 En chargement..."
+        : `⏱️ ${formatDuration(rawSeconds)}`;
+
+    const teams = new Map();
+    for (const m of members) {
+        if (!teams.has(m.participant.teamId)) teams.set(m.participant.teamId, []);
+        teams.get(m.participant.teamId).push(m);
+    }
+
+    let kind;
+    let title;
+    if (teams.size > 1) {
+        kind = "versus";
+        title = `⚔️ Face-à-face en ${queueName}`;
+    } else if (members.length > 1) {
+        kind = "group";
+        title = members.length === 2
+            ? `🤝 DuoQ }`
+            : `👥 Groupe de ${members.length} en ${queueName}`;
+    } else {
+        kind = "solo";
+        title = `🎮 ${members[0].player.riot_id}`;
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle(title)
+        .setColor(GAME_COLORS[kind]);
+
+    if (kind === "solo") {
+        const member = members[0];
+        embed
+            .setURL(getDpmUrl(member.player.riot_id))
+            .setDescription([
+                `🎯 **${queueName}** · ${durationLabel}`,
+                ...buildPlayerLines(member),
+            ].join("\n"));
+    } else if (kind === "group") {
+        embed.setDescription(durationLabel);
+        for (const member of members) {
+            embed.addFields({
+                name: member.player.riot_id,
+                value: truncate(
+                    [...buildPlayerLines(member), `🔗 [DPM](${getDpmUrl(member.player.riot_id)})`].join("\n"),
+                    FIELD_VALUE_MAX
+                ),
+                inline: false,
+            });
+        }
+    } else {
+        // Face-à-face : une colonne par équipe
+        embed.setDescription(durationLabel);
+        for (const teamId of [100, 200]) {
+            const teamMembers = teams.get(teamId);
+            if (!teamMembers) continue;
+            const blocks = teamMembers.map((m) =>
+                [`**[${m.player.riot_id}](${getDpmUrl(m.player.riot_id)})**`, ...buildPlayerLines(m)].join("\n")
+            );
+            embed.addFields({
+                name: TEAM_LABELS[teamId],
+                value: truncate(blocks.join("\n\n"), FIELD_VALUE_MAX),
+                inline: true,
+            });
+        }
+    }
+
+    for (const m of members) {
+        logger.success("INGAME", `${m.player.riot_id} affiché en game`, {
+            queue: queueName,
+            champion: getChampionName(m.participant.championId),
+            role: m.role,
+            kind,
+        });
+    }
+
+    return embed;
 }
 
 // ─── Commande ─────────────────────────────────────────────────────────────────
@@ -473,85 +624,34 @@ module.exports = {
             return interaction.editReply({ content: null, embeds: [embed] });
         }
 
-        // ── Construction des fields ───────────────────────────────────────────
-        const fields = [];
+        // ── Une carte par partie ──────────────────────────────────────────────
+        const playersByPuuid = new Map(players.map((p) => [p.puuid, p]));
+        const games = groupByGame(inGame, playersByPuuid).filter((g) => g.members.length > 0);
+        const inGameCount = games.reduce((sum, g) => sum + g.members.length, 0);
 
-        for (let i = 0; i < inGame.length; i++) {
-            const { player, gameData } = inGame[i];
-            const participant = gameData.participants?.find(
-                (p) => p.puuid === player.puuid
-            );
-
-            if (!participant) {
-                logger.warn("INGAME", `Participant introuvable pour ${player.riot_id}`, {
-                    gameId: gameData.gameId,
-                    participantPuuids: gameData.participants?.map(
-                        (p) => p.puuid?.substring(0, 8) + "..."
-                    ),
-                    playerPuuid: player.puuid?.substring(0, 8) + "...",
-                });
-                continue;
-            }
-
-            // Matching optimal (permutations) + bonus Smite = bien plus fiable
-            const roleAssignments = assignRolesForGame(gameData.participants);
-            const role = roleAssignments[participant.puuid] ?? "NONE";
-            const roleEmoji = ROLE_EMOJIS[role] ?? ROLE_EMOJIS["NONE"];
-            const roleLabel = role !== "NONE" ? role : "Inconnu";
-
-            const queueName = QUEUE_NAMES[gameData.gameQueueConfigId] ?? `Queue ${gameData.gameQueueConfigId}`;
-            const championName = getChampionName(participant.championId);
-            const rankEmoji = getRankEmoji(player.last_rank);
-
-            const rawSeconds = Math.max(0, Math.floor(gameData.gameLength ?? 0));
-            const durationLabel = rawSeconds < 60
-                ? "🔜 En chargement..."
-                : `⏱️ ${formatDuration(rawSeconds)}`;
-
-            const dpmUrl = getDpmUrl(player.riot_id);
-
-            const { wrLine, streakLine } = getPlayerRecentStats(player.id);
-
-            const lines = [
-                `🔗 [Voir sur DPM](${dpmUrl})`,
-                `${rankEmoji} **${player.last_rank || "UNRANKED"}** (${player.last_lp ?? 0} LP)`,
-                `${roleEmoji} **${roleLabel}** · 🏆 **${championName}**`,
-                `🎯 **${queueName}** · ${durationLabel}`,
-            ];
-            if (wrLine) lines.push(wrLine);
-            if (streakLine) lines.push(streakLine);
-
-            fields.push({
-                name: `🔴 ${player.riot_id}`,
-                value: lines.join("\n"),
-                inline: false,
-            });
-
-            if (i < inGame.length - 1) {
-                fields.push({
-                    name: "─────────────────────",
-                    value: "\u200b",
-                    inline: false,
-                });
-            }
-
-            logger.success("INGAME", `${player.riot_id} affiché en game`, {
-                queue: queueName,
-                champion: championName,
-                role: roleLabel,
-                duration: durationLabel,
-            });
+        const embeds = [];
+        let totalChars = 0;
+        for (const game of games) {
+            if (embeds.length >= MESSAGE_EMBEDS_MAX) break;
+            const embed = buildGameEmbed(game);
+            const size = JSON.stringify(embed.toJSON()).length;
+            if (totalChars + size > MESSAGE_CHARS_MAX) break;
+            totalChars += size;
+            embeds.push(embed);
         }
 
-        const embed = new EmbedBuilder()
-            .setTitle("🎮 Joueurs actuellement en partie")
-            .setColor(0x00bfff)
-            .addFields(fields)
-            .setTimestamp()
-            .setFooter({
-                text: `${inGame.length}/${players.length} joueur(s) en game${rejected.length > 0 ? ` · ⚠️ ${rejected.length} erreur(s) API` : ""}`,
-            });
+        const hiddenGames = games.length - embeds.length;
+        const footerParts = [`${inGameCount}/${players.length} joueur(s) en game`];
+        if (hiddenGames > 0) footerParts.push(`${hiddenGames} partie(s) non affichée(s)`);
+        if (rejected.length > 0) footerParts.push(`⚠️ ${rejected.length} erreur(s) API`);
 
-        await interaction.editReply({ content: null, embeds: [embed] });
+        embeds[embeds.length - 1]
+            .setTimestamp()
+            .setFooter({ text: footerParts.join(" · ") });
+
+        await interaction.editReply({
+            content: `🎮 **${inGameCount}** joueur(s) en partie · ${games.length} partie(s)`,
+            embeds,
+        });
     },
 };
