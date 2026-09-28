@@ -232,7 +232,7 @@ OWNER_ID=
 | `/ingame` | Show all monitored players currently in game (SoloQ / Flex) |
 | `/help` | Show the commands documentation |
 | `/clear [nombre] [channel]` | Delete messages in a channel *(Admin and Owner only)* |
-| `/flex [activer]` | Enable / disable Flex game notifications on the server, or show the current state *(Admin and Owner only)* |
+| `/flex [activer] [vignette]` | Enable / disable Flex game notifications, choose the group thumbnail (animated GIF or mosaic), or show the current settings *(Admin and Owner only)* |
 | `/forcerecap` | Force the weekly recap *(Owner only)* |
 
 The `joueur` options support autocompletion with the players tracked on the server.

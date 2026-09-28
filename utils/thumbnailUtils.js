@@ -1,5 +1,6 @@
 const axios = require("axios");
 const { createCanvas, loadImage } = require("canvas");
+const { GIFEncoder, quantize, applyPalette } = require("gifenc");
 const { getChampionIconUrl } = require("./championUtils");
 
 // ─── Icônes de champions (Data Dragon, mises en cache en mémoire) ────────────
@@ -162,4 +163,101 @@ async function buildGroupThumbnail(champions, patchVersion) {
     return canvas.toBuffer("image/png");
 }
 
-module.exports = { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, TEAM_COLORS };
+// ─── Icônes de rôle (Community Dragon, mises en cache en mémoire) ────────────
+const ROLE_ICON_URL = "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-clash/global/default/assets/images/position-selector/positions/icon-position-";
+const ROLE_ICON_NAMES = { TOP: "top", JUNGLE: "jungle", MIDDLE: "middle", BOTTOM: "bottom", UTILITY: "utility" };
+const roleIconCache = new Map(); // rôle → Image
+
+async function getRoleIcon(role) {
+    const name = ROLE_ICON_NAMES[role];
+    if (!name) return null;
+    if (roleIconCache.has(role)) return roleIconCache.get(role);
+
+    const res = await axios.get(`${ROLE_ICON_URL}${name}.png`, { responseType: "arraybuffer", timeout: 5000 });
+    const image = await loadImage(Buffer.from(res.data));
+    roleIconCache.set(role, image);
+    return image;
+}
+
+// ─── Vignette animée (GIF) : un champion par image + son rôle en badge ───────
+// champions = [{ championName, role, teamColor? }] (teamColor : contour, pour les face-à-face)
+const GIF_SIZE = 256;
+const GIF_FRAME_DELAY = 1500; // ms par champion
+const ROLE_BADGE_SIZE = 108;
+
+function drawGifFrame(ctx, icon, roleIcon, teamColor) {
+    ctx.clearRect(0, 0, GIF_SIZE, GIF_SIZE);
+    const border = teamColor ? 10 : 0;
+
+    // Contour de couleur d'équipe (face-à-face)
+    if (border) {
+        roundedRectPath(ctx, 0, 0, GIF_SIZE, GIF_SIZE, 36);
+        ctx.fillStyle = teamColor;
+        ctx.fill();
+    }
+
+    // Champion (plein cadre, coins arrondis)
+    ctx.save();
+    roundedRectPath(ctx, border, border, GIF_SIZE - 2 * border, GIF_SIZE - 2 * border, 32);
+    ctx.clip();
+    ctx.drawImage(icon, border, border, GIF_SIZE - 2 * border, GIF_SIZE - 2 * border);
+    ctx.restore();
+
+    // Badge de rôle en bas à droite
+    if (roleIcon) {
+        const cx = GIF_SIZE - ROLE_BADGE_SIZE / 2 - 4;
+        const cy = GIF_SIZE - ROLE_BADGE_SIZE / 2 - 4;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ROLE_BADGE_SIZE / 2, 0, Math.PI * 2);
+        ctx.fillStyle = "#1e1f22";
+        ctx.fill();
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "#c8aa6e"; // or League
+        ctx.stroke();
+        const s = ROLE_BADGE_SIZE * 0.66;
+        ctx.drawImage(roleIcon, cx - s / 2, cy - s / 2, s, s);
+    }
+}
+
+async function buildGroupGif(champions, patchVersion) {
+    const list = champions.slice(0, 10);
+    const icons = await Promise.all(list.map((c) => getChampionIcon(c.championName, patchVersion)));
+    // Icône de rôle indisponible → frame sans badge (pas bloquant)
+    const roleIcons = await Promise.all(list.map((c) => getRoleIcon(c.role).catch(() => null)));
+
+    const canvas = createCanvas(GIF_SIZE, GIF_SIZE);
+    const ctx = canvas.getContext("2d");
+    const gif = GIFEncoder();
+
+    for (let i = 0; i < list.length; i++) {
+        drawGifFrame(ctx, icons[i], roleIcons[i], list[i].teamColor);
+        const { data } = ctx.getImageData(0, 0, GIF_SIZE, GIF_SIZE);
+
+        // Palette propre à chaque image (meilleure qualité), 255 couleurs + 1 couleur
+        // transparente toujours réservée pour les coins arrondis
+        const palette = quantize(data, 255, { format: "rgba4444", oneBitAlpha: true });
+        let transparentIndex = palette.findIndex((c) => c[3] === 0);
+        if (transparentIndex < 0) {
+            palette.push([0, 0, 0, 0]);
+            transparentIndex = palette.length - 1;
+        }
+        const index = applyPalette(data, palette, "rgba4444");
+        for (let p = 0; p < index.length; p++) {
+            if (data[p * 4 + 3] < 128) index[p] = transparentIndex;
+        }
+
+        gif.writeFrame(index, GIF_SIZE, GIF_SIZE, {
+            palette,
+            delay: GIF_FRAME_DELAY,
+            repeat: 0, // boucle infinie
+            transparent: true,
+            transparentIndex,
+            dispose: 2, // efface l'image précédente (transparence)
+        });
+    }
+
+    gif.finish();
+    return Buffer.from(gif.bytes());
+}
+
+module.exports = { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, buildGroupGif, TEAM_COLORS };

@@ -1,11 +1,11 @@
 const axios = require("axios");
 const FormData = require("form-data");
-const { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, TEAM_COLORS } = require("../utils/thumbnailUtils");
+const { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, buildGroupGif, TEAM_COLORS } = require("../utils/thumbnailUtils");
 const { getRecentMatchIds, getMatch, getTimeline } = require("./riotApiService");
 const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
 const { extractMatchStats, extractEarlyDragons, extractLaneDiffs15 } = require("../utils/matchStatsUtils");
-const { isFlexEnabled } = require("../utils/guildSettings");
+const { isFlexEnabled, getGroupThumbnailStyle } = require("../utils/guildSettings");
 const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = require("./matchService");
 const { isSameTeamGroup, sortEntriesByRole, buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildFlexMatchEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
@@ -132,12 +132,6 @@ const TIMELINE_ROLES = new Set(["TOP", "MIDDLE", "BOTTOM", "UTILITY"]);
 const SOLOQ_QUEUE = 420;
 const FLEX_QUEUE = 440;
 
-// Numéro d'un match ("EUW1_7123456789" → 7123456789) : croissant dans le temps
-function matchNumber(matchId) {
-    const n = Number(String(matchId ?? "").split("_")[1]);
-    return Number.isFinite(n) && n > 0 ? n : null;
-}
-
 // Match depuis le cache, sinon 1 appel API. Mis en cache : réutilisé par les
 // autres joueurs de la game, par processNewMatch et par la notification
 async function getMatchInfoCached(matchId) {
@@ -150,28 +144,21 @@ async function getMatchInfoCached(matchId) {
 }
 
 // ─── Mode "ranked" (serveur avec /flex) : SoloQ + Flex en un seul appel ──────
-// Curseur players.last_ranked_match_id = dernier match ranked traité (toutes files).
+// Curseur players.last_ranked_match_id = dernier match ranked vu (toutes files).
 // Chaque nouveau match coûte 1 seul appel (getMatch), qui sert à la fois à
 // connaître sa file et au traitement SoloQ / à la notification Flex.
 async function checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, pending) {
     const matchIds = await getRecentMatchIds(player.puuid, 10, { type: "ranked" });
     if (!matchIds?.length) return;
 
-    // Curseur = le plus récent entre le curseur ranked et le dernier match SoloQ :
-    // à l'activation de /flex, les parties jouées avant ne sont pas relues
-    const cursorId = [player.last_ranked_match_id, player.last_match_id]
-        .filter((id) => matchNumber(id) !== null)
-        .sort((a, b) => matchNumber(b) - matchNumber(a))[0] ?? null;
-    const cursor = matchNumber(cursorId);
-
-    const newMatchIds = [];
-    for (const matchId of matchIds) {
-        const n = matchNumber(matchId);
-        if (matchId === cursorId || (cursor !== null && n !== null && n <= cursor)) break;
-        newMatchIds.push(matchId);
+    const cursorId = player.last_ranked_match_id;
+    if (!cursorId || !matchIds.includes(cursorId)) {
+        await initRankedCursor(player, guildEntries, matchIds, pending);
+        return;
     }
+
+    const newMatchIds = matchIds.slice(0, matchIds.indexOf(cursorId)).reverse();
     if (!newMatchIds.length) return;
-    newMatchIds.reverse();
 
     const isStored = global.db.prepare(`SELECT 1 FROM match_history WHERE player_id = ? AND match_id = ?`);
     const soloQIds = [];
@@ -214,6 +201,27 @@ async function checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, 
     }
 }
 
+// ─── (Ré)initialisation du curseur ranked ────────────────────────────────────
+// 1re vérification après l'activation de /flex (ou curseur trop ancien, ex. /flex
+// désactivé puis réactivé) : au lieu de lire chaque match pour connaître sa file
+// (jusqu'à 10 appels), 1 seul appel à la liste SoloQ. Les SoloQ en attente sont
+// traitées normalement ; les Flex jouées avant l'activation ne sont pas notifiées.
+async function initRankedCursor(player, guildEntries, rankedMatchIds, pending) {
+    const soloQMatchIds = await getRecentMatchIds(player.puuid, 10);
+
+    const newSoloQIds = [];
+    for (const matchId of soloQMatchIds ?? []) {
+        if (matchId === player.last_match_id) break;
+        newSoloQIds.push(matchId);
+    }
+    if (newSoloQIds.length) {
+        await processSoloQMatches(player, guildEntries, newSoloQIds.reverse(), pending);
+    }
+
+    global.db.prepare(`UPDATE players SET last_ranked_match_id = ? WHERE id = ?`).run(rankedMatchIds[0], player.id);
+    logger.info("MONITOR", `Curseur ranked initialisé pour ${player.riot_id}`, { cursor: rankedMatchIds[0] });
+}
+
 function collectFlexNotification(player, flexGuildEntries, matchId, matchInfo, pendingFlexNotifications) {
     const endedAt = matchInfo.gameEndTimestamp ?? matchInfo.gameCreation + matchInfo.gameDuration * 1000;
     if (Date.now() - endedAt > FLEX_MAX_AGE) return;
@@ -226,6 +234,7 @@ function collectFlexNotification(player, flexGuildEntries, matchId, matchInfo, p
         if (!pendingFlexNotifications.has(key)) {
             pendingFlexNotifications.set(key, {
                 channelId: guildEntry.channel_id,
+                guildId: guildEntry.guild_id,
                 matchId,
                 match: matchInfo,
                 entries: [],
@@ -276,7 +285,7 @@ function computeFlexGameScore(match, participant, timeline) {
 }
 
 async function sendPendingFlexNotifications(client, pendingFlexNotifications) {
-    for (const { channelId, matchId, match, entries: rawEntries } of pendingFlexNotifications.values()) {
+    for (const { channelId, guildId, matchId, match, entries: rawEntries } of pendingFlexNotifications.values()) {
         const entries = sortEntriesByRole(rawEntries);
         try {
             // Timeline (1 appel) seulement si une note en a besoin : pas de note sur
@@ -292,7 +301,10 @@ async function sendPendingFlexNotifications(client, pendingFlexNotifications) {
             if (!channel) continue;
 
             // Vignette : duo (même équipe) ou partenaire de lane ; face-à-face → 1er joueur seulement
-            const files = await buildDuoLaneThumbnails(entries, match, { singleEmbed: true });
+            const files = await buildDuoLaneThumbnails(entries, match, {
+                singleEmbed: true,
+                groupStyle: getGroupThumbnailStyle(guildId),
+            });
 
             const buildPayload = () => ({
                 embeds: [buildFlexMatchEmbed(entries, match, matchId, patchVersion)],
@@ -361,7 +373,8 @@ async function sendPendingRenames(client, pendingRenames) {
 // Renseigne entry.thumbnail et retourne les fichiers à joindre au message.
 // singleEmbed : tous les joueurs sont dans un seul embed (Flex) → une seule vignette,
 // même en face-à-face (sinon : une vignette "lane" par embed de joueur)
-async function buildDuoLaneThumbnails(entries, match, { singleEmbed = false } = {}) {
+// groupStyle : vignette des groupes choisie par le serveur (/flex vignette) → "gif" ou "mosaique"
+async function buildDuoLaneThumbnails(entries, match, { singleEmbed = false, groupStyle = "gif" } = {}) {
     const sameTeam = isSameTeamGroup(entries);
 
     // Duo dans la même équipe : champion du 1er joueur + champion de son duo en petit
@@ -377,13 +390,25 @@ async function buildDuoLaneThumbnails(entries, match, { singleEmbed = false } = 
         }
     }
 
-    // Groupe (3+) ou face-à-face dans un seul embed : mosaïque des champions de
-    // tous les joueurs suivis (contour bleu / rouge par équipe en face-à-face)
+    // Groupe (3+) ou face-à-face dans un seul embed, selon le réglage du serveur :
+    //   • "gif"      : GIF animé qui fait défiler le champion de chaque joueur + son rôle
+    //   • "mosaique" : image fixe avec les champions de tous les joueurs
+    // (contour bleu / rouge par équipe en face-à-face ; mosaïque = secours du GIF)
     if (entries.length > 1 && (sameTeam || singleEmbed)) {
         const champions = entries.map((e) => ({
             championName: e.result.participant.championName,
+            role: e.result.participant.teamPosition,
             teamColor: sameTeam ? null : TEAM_COLORS[e.result.participant.teamId],
         }));
+        if (groupStyle === "gif") {
+            try {
+                const buffer = await buildGroupGif(champions, patchVersion);
+                entries[0].thumbnail = "attachment://group.gif";
+                return [{ name: "group.gif", buffer }];
+            } catch (error) {
+                logger.warn("MONITOR", `Vignette GIF impossible pour ${entries[0].player.riot_id}, mosaïque fixe`, { error: error.message });
+            }
+        }
         try {
             const buffer = await buildGroupThumbnail(champions, patchVersion);
             entries[0].thumbnail = "attachment://group.png";
@@ -470,7 +495,7 @@ async function sendPendingNotifications(client, pendingNotifications) {
             };
 
             // Vignettes "duo lane" (ADC / support + partenaire de botlane)
-            const files = await buildDuoLaneThumbnails(entries, match);
+            const files = await buildDuoLaneThumbnails(entries, match, { groupStyle: getGroupThumbnailStyle(guildId) });
 
             try {
                 if (files.length) await sendMessageWithFiles(channelId, buildPayload(), files);

@@ -43,8 +43,8 @@ const COMMANDS_INFO = [
     {
         name: "/flex",
         emoji: "⚙️",
-        description: "Active ou désactive les notifications des parties Flex (admins uniquement)",
-        usage: "/flex [activer: true / false]",
+        description: "Notifications des parties Flex et style de vignette des groupes (admins uniquement)",
+        usage: "/flex [activer: true / false] [vignette: GIF / Mosaïque]",
     },
 ];
 

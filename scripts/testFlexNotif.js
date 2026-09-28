@@ -48,6 +48,9 @@ if (!process.env.DISCORD_TOKEN) {
 const db = new Database(path.join(__dirname, "..", "players.db"), { readonly: true });
 global.db = db;
 
+// Serveur du salon : sa vignette (/flex vignette) est utilisée pour le test
+const GUILD_ID = db.prepare(`SELECT guild_id FROM player_guilds WHERE channel_id = ? LIMIT 1`).get(CHANNEL_ID)?.guild_id ?? null;
+
 const timelineCache = require("../cache/timelineCache");
 const { sendPendingFlexNotifications, updatePatchVersion } = require("../services/monitoringService");
 
@@ -244,6 +247,7 @@ const discordClient = {
 
     const pending = new Map([[`${CHANNEL_ID}|${matchId}`, {
         channelId: CHANNEL_ID,
+        guildId: GUILD_ID,
         matchId,
         match,
         entries: trackedPlayers.map(({ player, participant }) => ({ player, result: { participant } })),
