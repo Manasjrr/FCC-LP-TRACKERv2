@@ -178,6 +178,25 @@ function runMigrations(db) {
 
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_match_history_player_role
         ON match_history (player_id, team_position)`).run();
+
+    // Migration 6 — Paramètres par serveur (notifications Flex...)
+    db.prepare(`
+        CREATE TABLE IF NOT EXISTS guild_settings (
+            guild_id           TEXT PRIMARY KEY,
+            flex_notifications INTEGER DEFAULT 0
+        )
+    `).run();
+
+    // Migration 7 — Dernier match ranked (SoloQ + Flex) traité par joueur
+    // (curseur du mode "ranked" utilisé quand /flex est activé)
+    const hasLastRankedMatch = db.prepare(`
+        SELECT COUNT(*) as count FROM pragma_table_info('players') WHERE name = 'last_ranked_match_id'
+    `).get().count > 0;
+
+    if (!hasLastRankedMatch) {
+        db.prepare(`ALTER TABLE players ADD COLUMN last_ranked_match_id TEXT`).run();
+        console.log("Migration : colonne last_ranked_match_id ajoutée à players");
+    }
 }
 
 module.exports = { initDB, runMigrations };

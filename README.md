@@ -32,7 +32,8 @@ It automatically detects new matches, posts win/loss alerts in designated channe
 ## Features
 
 - 🔍 **Automatic match detection** — polls the Riot API every 2 minutes to catch new ranked games
-- 👥 **Duo detection** — tracked players in the same game are grouped into a single notification (duo header with each player's role + their usual match embeds). Opponents in the same game are shown as a "⚔️ face-off"
+- 👥 **Duo detection** — tracked players in the same team are grouped into a single "duo" embed (one block per player, duration and match ID shown once, thumbnail with both champions). Opponents in the same game are shown as a "⚔️ face-off"
+- 🟣 **Flex notifications (optional)** — enabled per server with `/flex`: every Flex game of the tracked players is posted as a single embed (KDA, CS, damage). Flex games are notification only and never count in stats, LP or ratings
 - 🧮 **Player rating (/100)** — role-aware score with a letter grade and its evolution over 7 / 30 days, shown in `/stats`, `/list` and the "🧮 Infos note" button (see [Player Rating](#player-rating))
 - 🎯 **Game rating** — every match notification shows the player's performance in that game, out of 100, according to the role played
 - 🏹 **Bot lane thumbnail** — for ADC and Support games, the notification thumbnail shows the champion played with the bot lane partner's champion in a small badge (generated with Canvas, icons cached in memory)
@@ -129,6 +130,7 @@ FCC-LP-TRACKERv2/
 │   ├── history.js      # Match history for a player
 │   ├── ingame.js       # Show tracked players currently in game
 │   ├── clear.js        # Delete messages (Admin/Owner only)
+│   ├── flex.js         # Enable / disable Flex notifications (Admin/Owner only)
 │   ├── force-recap.js  # Force the weekly recap (Owner only)
 │   └── help.js         # Show the commands documentation
 │
@@ -154,6 +156,7 @@ FCC-LP-TRACKERv2/
 │
 └── utils/
     ├── playerUtils.js      # Player lookups, server ranking, DPM links, shared autocomplete
+    ├── guildSettings.js    # Per-server settings (Flex notifications)
     ├── ratingUtils.js      # Role-aware player rating (/100)
     ├── matchStatsUtils.js  # Detailed match stats extraction (match + timeline)
     ├── historyUtils.js     # Match history embed builder
@@ -229,6 +232,7 @@ OWNER_ID=
 | `/ingame` | Show all monitored players currently in game (SoloQ / Flex) |
 | `/help` | Show the commands documentation |
 | `/clear [nombre] [channel]` | Delete messages in a channel *(Admin and Owner only)* |
+| `/flex [activer]` | Enable / disable Flex game notifications on the server, or show the current state *(Admin and Owner only)* |
 | `/forcerecap` | Force the weekly recap *(Owner only)* |
 
 The `joueur` options support autocompletion with the players tracked on the server.

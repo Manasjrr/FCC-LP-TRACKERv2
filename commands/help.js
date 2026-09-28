@@ -40,6 +40,12 @@ const COMMANDS_INFO = [
         description: "Affiche tous les comptes surveillés actuellement en partie",
         usage: "/ingame",
     },
+    {
+        name: "/flex",
+        emoji: "⚙️",
+        description: "Active ou désactive les notifications des parties Flex (admins uniquement)",
+        usage: "/flex [activer: true / false]",
+    },
 ];
 
 module.exports = {

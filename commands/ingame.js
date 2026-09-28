@@ -333,11 +333,26 @@ function withTimeout(promise, ms, label) {
 }
 
 // ─── Traitement par batch pour paralléliser sans spam l'API ─────────────────
+// Un joueur déjà présent dans une partie trouvée (même game qu'un autre joueur
+// suivi) n'est pas interrogé : ses infos sont déjà dans les participants → 1 appel en moins
 async function processBatch(players, batchSize = 3, delayMs = 200) {
     const results = [];
+    const knownGames = new Map(); // puuid → gameData déjà récupérée
+    let remaining = [...players];
 
-    for (let i = 0; i < players.length; i += batchSize) {
-        const batch = players.slice(i, i + batchSize);
+    while (remaining.length) {
+        // Joueurs dont la partie est déjà connue : aucun appel API
+        const known = remaining.filter((p) => knownGames.has(p.puuid));
+        for (const player of known) {
+            const gameData = knownGames.get(player.puuid);
+            ingameCache.set(player.puuid, { data: gameData, timestamp: Date.now() });
+            results.push({ status: "fulfilled", value: { player, gameData } });
+        }
+        remaining = remaining.filter((p) => !knownGames.has(p.puuid));
+        if (!remaining.length) break;
+
+        const batch = remaining.slice(0, batchSize);
+        remaining = remaining.slice(batchSize);
 
         const batchResults = await Promise.allSettled(
             batch.map((p) =>
@@ -349,12 +364,15 @@ async function processBatch(players, batchSize = 3, delayMs = 200) {
             const player = batch[idx];
             if (result.status === "fulfilled") {
                 results.push({ status: "fulfilled", value: { player, gameData: result.value } });
+                for (const participant of result.value?.participants ?? []) {
+                    knownGames.set(participant.puuid, result.value);
+                }
             } else {
                 results.push({ status: "rejected", player, reason: result.reason });
             }
         });
 
-        if (i + batchSize < players.length) {
+        if (remaining.some((p) => !knownGames.has(p.puuid))) {
             await new Promise((r) => setTimeout(r, delayMs));
         }
     }

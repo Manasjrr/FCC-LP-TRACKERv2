@@ -78,4 +78,88 @@ async function buildDuoLaneThumbnail(championName, partnerChampionName, patchVer
     return canvas.toBuffer("image/png");
 }
 
-module.exports = { getLanePartner, buildDuoLaneThumbnail };
+// ─── Vignette "groupe" : champions de tous les joueurs suivis ────────────────
+// Discord affiche la vignette en ~80 px : image générée en 256 px pour rester nette.
+// champions = [{ championName, teamColor? }] (teamColor : contour, pour les face-à-face)
+const GROUP_SIZE = 256;
+const GROUP_GAP = 8;
+const TEAM_COLORS = { 100: "#3b82f6", 200: "#ef4444" };
+
+// Positions [x, y, taille, rond ?] selon le nombre de champions
+function getGroupLayout(count) {
+    const half = (GROUP_SIZE - GROUP_GAP) / 2;
+    switch (count) {
+        case 2: // côte à côte, centrés verticalement
+            return [[0, half / 2, half], [half + GROUP_GAP, half / 2, half]];
+        case 3: // 2 en haut, 1 centré en bas
+            return [[0, 0, half], [half + GROUP_GAP, 0, half], [half / 2 + GROUP_GAP / 2, half + GROUP_GAP, half]];
+        case 4: // carré 2×2
+            return [[0, 0, half], [half + GROUP_GAP, 0, half], [0, half + GROUP_GAP, half], [half + GROUP_GAP, half + GROUP_GAP, half]];
+        case 5: { // 4 coins + le 3e (mid, joueurs triés top → support) au centre, en rond
+            const center = 120;
+            const order = [[0, 0, half], [half + GROUP_GAP, 0, half], null, [0, half + GROUP_GAP, half], [half + GROUP_GAP, half + GROUP_GAP, half]];
+            order[2] = [(GROUP_SIZE - center) / 2, (GROUP_SIZE - center) / 2, center, true];
+            return order;
+        }
+        default: { // grille 3 colonnes (face-à-face à 6+)
+            const size = (GROUP_SIZE - 2 * GROUP_GAP) / 3;
+            const rows = Math.ceil(count / 3);
+            const offsetY = (GROUP_SIZE - (rows * size + (rows - 1) * GROUP_GAP)) / 2;
+            return Array.from({ length: count }, (_, i) => [
+                (i % 3) * (size + GROUP_GAP),
+                offsetY + Math.floor(i / 3) * (size + GROUP_GAP),
+                size,
+            ]);
+        }
+    }
+}
+
+async function buildGroupThumbnail(champions, patchVersion) {
+    const list = champions.slice(0, 9);
+    const icons = await Promise.all(list.map((c) => getChampionIcon(c.championName, patchVersion)));
+    const layout = getGroupLayout(list.length);
+
+    const canvas = createCanvas(GROUP_SIZE, GROUP_SIZE);
+    const ctx = canvas.getContext("2d");
+
+    // Le rond central (5 joueurs) est dessiné en dernier, par-dessus les coins
+    const drawOrder = list.map((_, i) => i).sort((a, b) => Boolean(layout[a][3]) - Boolean(layout[b][3]));
+
+    for (const i of drawOrder) {
+        const [x, y, size, round] = layout[i];
+        const border = list[i].teamColor ? 6 : 0;
+        const path = (inset) => {
+            if (round) {
+                ctx.beginPath();
+                ctx.arc(x + size / 2, y + size / 2, size / 2 - inset, 0, Math.PI * 2);
+            } else {
+                roundedRectPath(ctx, x + inset, y + inset, size - 2 * inset, size - 2 * inset, size * 0.14);
+            }
+        };
+
+        // Rond central : anneau sombre pour le détacher des icônes derrière
+        if (round) {
+            ctx.beginPath();
+            ctx.arc(x + size / 2, y + size / 2, size / 2 + 6, 0, Math.PI * 2);
+            ctx.fillStyle = "#1e1f22";
+            ctx.fill();
+        }
+
+        // Contour de couleur d'équipe (face-à-face)
+        if (border) {
+            path(0);
+            ctx.fillStyle = list[i].teamColor;
+            ctx.fill();
+        }
+
+        ctx.save();
+        path(border);
+        ctx.clip();
+        ctx.drawImage(icons[i], x + border, y + border, size - 2 * border, size - 2 * border);
+        ctx.restore();
+    }
+
+    return canvas.toBuffer("image/png");
+}
+
+module.exports = { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, TEAM_COLORS };

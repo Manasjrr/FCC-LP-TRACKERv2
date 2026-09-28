@@ -71,9 +71,11 @@ async function getSoloQData(puuid) {
 }
 
 // ─── Matchs ───────────────────────────────────────────────────────────────────
-async function getRecentMatchIds(puuid, count = 5) {
+// filter : { queue: 420 } (SoloQ, défaut) ou { type: "ranked" } (SoloQ + Flex en un seul appel)
+async function getRecentMatchIds(puuid, count = 5, filter = { queue: 420 }) {
+    const params = new URLSearchParams({ ...filter, count });
     const res = await riotGet(
-        `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=420&count=${count}`
+        `https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?${params}`
     );
     return res.data;
 }

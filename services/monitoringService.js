@@ -1,9 +1,13 @@
 const axios = require("axios");
 const FormData = require("form-data");
-const { getLanePartner, buildDuoLaneThumbnail } = require("../utils/thumbnailUtils");
-const { getRecentMatchIds } = require("./riotApiService");
+const { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, TEAM_COLORS } = require("../utils/thumbnailUtils");
+const { getRecentMatchIds, getMatch, getTimeline } = require("./riotApiService");
+const matchCache = require("../cache/matchCache");
+const timelineCache = require("../cache/timelineCache");
+const { extractMatchStats, extractEarlyDragons, extractLaneDiffs15 } = require("../utils/matchStatsUtils");
+const { isFlexEnabled } = require("../utils/guildSettings");
 const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = require("./matchService");
-const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
+const { isSameTeamGroup, sortEntriesByRole, buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildFlexMatchEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
 const { computeGameScore } = require("../utils/ratingUtils");
 const logger = require("../utils/loggers");
@@ -35,9 +39,18 @@ async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP
 }
 
 // ─── Vérification d'un joueur ─────────────────────────────────────────────────
-async function checkPlayerNewMatches(player, guildEntries, pendingNotifications, pendingRenames) {
-    // player = ligne de la table players (global, unique par puuid)
-    // guildEntries = liste des player_guilds actifs pour ce joueur
+// player = ligne de la table players (global, unique par puuid)
+// guildEntries = liste des player_guilds actifs pour ce joueur
+// flexGuildEntries = serveurs de ce joueur qui ont activé les Flex (/flex)
+//
+// Dans les deux cas : 1 seul appel "liste des matchs" par cycle
+//   • sans Flex : liste SoloQ (queue=420)
+//   • avec Flex : liste ranked (type=ranked → SoloQ + Flex)
+async function checkPlayer(player, guildEntries, flexGuildEntries, pending) {
+    if (flexGuildEntries.length) {
+        await checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, pending);
+        return;
+    }
 
     const matchIds = await getRecentMatchIds(player.puuid, 10);
     if (!matchIds?.length) return;
@@ -47,11 +60,14 @@ async function checkPlayerNewMatches(player, guildEntries, pendingNotifications,
         if (matchId === player.last_match_id) break;
         newMatchIds.push(matchId);
     }
-
     if (!newMatchIds.length) return;
 
-    newMatchIds.reverse();
+    await processSoloQMatches(player, guildEntries, newMatchIds.reverse(), pending);
+}
 
+// ─── Traitement des nouveaux matchs SoloQ (du plus ancien au plus récent) ─────
+// Retourne le joueur à jour (LP, rang, Riot ID)
+async function processSoloQMatches(player, guildEntries, newMatchIds, { pendingNotifications, pendingRenames }) {
     logger.info("MONITOR", `${newMatchIds.length} nouveau(x) match(s) pour ${player.riot_id}`, {
         matches: newMatchIds,
     });
@@ -102,6 +118,210 @@ async function checkPlayerNewMatches(player, guildEntries, pendingNotifications,
             });
         }
     }
+
+    return currentPlayer;
+}
+
+// ─── Parties Flex (notification uniquement, rien n'est enregistré en BDD) ────
+// Seules les parties terminées récemment sont notifiées → pas de rafale de
+// vieilles games à l'activation de /flex
+const FLEX_MAX_AGE = 6 * 60 * 60 * 1000;
+const REMAKE_MAX_DURATION = 5 * 60; // secondes (même seuil que la SoloQ)
+// Rôles dont la note utilise la timeline (écarts à 15 min, dragons du support)
+const TIMELINE_ROLES = new Set(["TOP", "MIDDLE", "BOTTOM", "UTILITY"]);
+const SOLOQ_QUEUE = 420;
+const FLEX_QUEUE = 440;
+
+// Numéro d'un match ("EUW1_7123456789" → 7123456789) : croissant dans le temps
+function matchNumber(matchId) {
+    const n = Number(String(matchId ?? "").split("_")[1]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Match depuis le cache, sinon 1 appel API. Mis en cache : réutilisé par les
+// autres joueurs de la game, par processNewMatch et par la notification
+async function getMatchInfoCached(matchId) {
+    let matchInfo = matchCache.getMatch(matchId);
+    if (!matchInfo) {
+        matchInfo = (await getMatch(matchId)).info;
+        matchCache.setMatch(matchId, matchInfo);
+    }
+    return matchInfo;
+}
+
+// ─── Mode "ranked" (serveur avec /flex) : SoloQ + Flex en un seul appel ──────
+// Curseur players.last_ranked_match_id = dernier match ranked traité (toutes files).
+// Chaque nouveau match coûte 1 seul appel (getMatch), qui sert à la fois à
+// connaître sa file et au traitement SoloQ / à la notification Flex.
+async function checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, pending) {
+    const matchIds = await getRecentMatchIds(player.puuid, 10, { type: "ranked" });
+    if (!matchIds?.length) return;
+
+    // Curseur = le plus récent entre le curseur ranked et le dernier match SoloQ :
+    // à l'activation de /flex, les parties jouées avant ne sont pas relues
+    const cursorId = [player.last_ranked_match_id, player.last_match_id]
+        .filter((id) => matchNumber(id) !== null)
+        .sort((a, b) => matchNumber(b) - matchNumber(a))[0] ?? null;
+    const cursor = matchNumber(cursorId);
+
+    const newMatchIds = [];
+    for (const matchId of matchIds) {
+        const n = matchNumber(matchId);
+        if (matchId === cursorId || (cursor !== null && n !== null && n <= cursor)) break;
+        newMatchIds.push(matchId);
+    }
+    if (!newMatchIds.length) return;
+    newMatchIds.reverse();
+
+    const isStored = global.db.prepare(`SELECT 1 FROM match_history WHERE player_id = ? AND match_id = ?`);
+    const soloQIds = [];
+    const flexMatches = [];
+    let lastReadId = null;
+
+    for (const matchId of newMatchIds) {
+        // Déjà enregistré → c'est une SoloQ déjà traitée, aucun appel
+        if (!isStored.get(player.id, matchId)) {
+            let matchInfo;
+            try {
+                matchInfo = await getMatchInfoCached(matchId);
+            } catch (error) {
+                // Match illisible pour l'instant : la suite est reprise au prochain cycle
+                logger.warn("MONITOR", `Erreur récupération du match ${matchId} pour ${player.riot_id}`, {
+                    error: error.message,
+                    status: error.response?.status ?? null,
+                });
+                break;
+            }
+
+            if (matchInfo.queueId === SOLOQ_QUEUE) soloQIds.push(matchId);
+            else if (matchInfo.queueId === FLEX_QUEUE) flexMatches.push({ matchId, matchInfo });
+        }
+        lastReadId = matchId;
+    }
+
+    // SoloQ : traitement habituel (match déjà en cache → pas d'appel en plus)
+    let currentPlayer = player;
+    if (soloQIds.length) {
+        currentPlayer = await processSoloQMatches(player, guildEntries, soloQIds, pending);
+    }
+
+    for (const { matchId, matchInfo } of flexMatches) {
+        collectFlexNotification(currentPlayer, flexGuildEntries, matchId, matchInfo, pending.pendingFlexNotifications);
+    }
+
+    if (lastReadId) {
+        global.db.prepare(`UPDATE players SET last_ranked_match_id = ? WHERE id = ?`).run(lastReadId, player.id);
+    }
+}
+
+function collectFlexNotification(player, flexGuildEntries, matchId, matchInfo, pendingFlexNotifications) {
+    const endedAt = matchInfo.gameEndTimestamp ?? matchInfo.gameCreation + matchInfo.gameDuration * 1000;
+    if (Date.now() - endedAt > FLEX_MAX_AGE) return;
+
+    const participant = matchInfo.participants.find((p) => p.puuid === player.puuid);
+    if (!participant) return;
+
+    for (const guildEntry of flexGuildEntries) {
+        const key = `${guildEntry.channel_id}|${matchId}`;
+        if (!pendingFlexNotifications.has(key)) {
+            pendingFlexNotifications.set(key, {
+                channelId: guildEntry.channel_id,
+                matchId,
+                match: matchInfo,
+                entries: [],
+            });
+        }
+        const pendingFlex = pendingFlexNotifications.get(key);
+        if (!pendingFlex.entries.some((e) => e.player.id === player.id)) {
+            pendingFlex.entries.push({ player, result: { participant } });
+        }
+    }
+}
+
+// Timeline d'une Flex (cache mémoire uniquement) — null si indisponible :
+// la note est alors calculée sans les stats de lane à 15 min / dragons
+async function getFlexTimeline(matchId) {
+    const cached = timelineCache.getTimeline(matchId);
+    if (cached) return cached;
+    try {
+        const timeline = await getTimeline(matchId);
+        timelineCache.setTimeline(matchId, timeline);
+        return timeline;
+    } catch (error) {
+        logger.warn("MONITOR", `Timeline Flex indisponible pour ${matchId}, note sans stats de lane`, {
+            status: error.response?.status,
+            error: error.message,
+        });
+        return null;
+    }
+}
+
+// Note de la game (même barème que la SoloQ) à partir d'une ligne "match_history"
+// construite en mémoire — rien n'est enregistré, la note du /stats n'est pas affectée
+function computeFlexGameScore(match, participant, timeline) {
+    const row = {
+        kills: participant.kills,
+        deaths: participant.deaths,
+        assists: participant.assists,
+        win: participant.win ? 1 : 0,
+        match_duration: match.gameDuration,
+        is_remake: match.gameDuration < REMAKE_MAX_DURATION ? 1 : 0,
+        ...extractMatchStats(match, participant),
+    };
+    if (timeline) {
+        row.early_dragons = extractEarlyDragons(timeline)[participant.teamId] ?? null;
+        Object.assign(row, extractLaneDiffs15(timeline, match, participant.puuid) ?? {});
+    }
+    return computeGameScore(row);
+}
+
+async function sendPendingFlexNotifications(client, pendingFlexNotifications) {
+    for (const { channelId, matchId, match, entries: rawEntries } of pendingFlexNotifications.values()) {
+        const entries = sortEntriesByRole(rawEntries);
+        try {
+            // Timeline (1 appel) seulement si une note en a besoin : pas de note sur
+            // un remake, et la note d'un jungler n'utilise aucune stat de la timeline
+            const needsTimeline = match.gameDuration >= REMAKE_MAX_DURATION
+                && entries.some((e) => TIMELINE_ROLES.has(e.result.participant.teamPosition));
+            const timeline = needsTimeline ? await getFlexTimeline(matchId) : null;
+            for (const entry of entries) {
+                entry.gameScore = computeFlexGameScore(match, entry.result.participant, timeline);
+            }
+
+            const channel = await client.channels.fetch(channelId).catch(() => null);
+            if (!channel) continue;
+
+            // Vignette : duo (même équipe) ou partenaire de lane ; face-à-face → 1er joueur seulement
+            const files = await buildDuoLaneThumbnails(entries, match, { singleEmbed: true });
+
+            const buildPayload = () => ({
+                embeds: [buildFlexMatchEmbed(entries, match, matchId, patchVersion)],
+                components: [],
+            });
+
+            try {
+                if (files.length) await sendMessageWithFiles(channelId, buildPayload(), files);
+                else await channel.send(buildPayload());
+            } catch (error) {
+                if (!files.length) throw error;
+                logger.warn("MONITOR", `Envoi avec vignette impossible pour la Flex ${matchId}, envoi classique`, {
+                    error: error.message,
+                    status: error.response?.status,
+                });
+                for (const entry of entries) delete entry.thumbnail;
+                await channel.send(buildPayload());
+            }
+
+            logger.info("MONITOR", `Notification Flex envoyée pour ${matchId}`, {
+                players: entries.map((e) => e.player.riot_id),
+            });
+        } catch (error) {
+            logger.error("MONITOR", `Erreur envoi notification Flex pour ${matchId}`, {
+                channel: channelId,
+                error: error.message,
+            });
+        }
+    }
 }
 
 // ─── Joueurs suivis du serveur présents dans une game (BDD uniquement) ───────
@@ -139,7 +359,41 @@ async function sendPendingRenames(client, pendingRenames) {
 // ─── Vignettes "duo lane" ─────────────────────────────────────────────────────
 // Pour chaque ADC / support : icône du champion + partenaire de botlane en petit.
 // Renseigne entry.thumbnail et retourne les fichiers à joindre au message.
-async function buildDuoLaneThumbnails(entries, match) {
+// singleEmbed : tous les joueurs sont dans un seul embed (Flex) → une seule vignette,
+// même en face-à-face (sinon : une vignette "lane" par embed de joueur)
+async function buildDuoLaneThumbnails(entries, match, { singleEmbed = false } = {}) {
+    const sameTeam = isSameTeamGroup(entries);
+
+    // Duo dans la même équipe : champion du 1er joueur + champion de son duo en petit
+    if (entries.length === 2 && sameTeam) {
+        const [main, mate] = entries.map((e) => e.result.participant);
+        try {
+            const buffer = await buildDuoLaneThumbnail(main.championName, mate.championName, patchVersion);
+            entries[0].thumbnail = "attachment://duo.png";
+            return [{ name: "duo.png", buffer }];
+        } catch (error) {
+            logger.warn("MONITOR", `Vignette duo impossible pour ${entries[0].player.riot_id}`, { error: error.message });
+            return [];
+        }
+    }
+
+    // Groupe (3+) ou face-à-face dans un seul embed : mosaïque des champions de
+    // tous les joueurs suivis (contour bleu / rouge par équipe en face-à-face)
+    if (entries.length > 1 && (sameTeam || singleEmbed)) {
+        const champions = entries.map((e) => ({
+            championName: e.result.participant.championName,
+            teamColor: sameTeam ? null : TEAM_COLORS[e.result.participant.teamId],
+        }));
+        try {
+            const buffer = await buildGroupThumbnail(champions, patchVersion);
+            entries[0].thumbnail = "attachment://group.png";
+            return [{ name: "group.png", buffer }];
+        } catch (error) {
+            logger.warn("MONITOR", `Vignette groupe impossible pour ${entries[0].player.riot_id}`, { error: error.message });
+            return [];
+        }
+    }
+
     const files = [];
     for (const [index, entry] of entries.slice(0, 9).entries()) {
         const participant = entry.result.participant;
@@ -180,7 +434,9 @@ async function sendMessageWithFiles(channelId, { embeds, components }, files) {
 async function sendPendingNotifications(client, pendingNotifications) {
     const timelinesRequested = new Set();
 
-    for (const { channelId, guildId, matchId, match, entries } of pendingNotifications.values()) {
+    for (const { channelId, guildId, matchId, match, entries: rawEntries } of pendingNotifications.values()) {
+        // Joueurs d'un groupe affichés dans l'ordre des rôles (top → support)
+        const entries = sortEntriesByRole(rawEntries);
         try {
             // Timeline récupérée une seule fois par match, AVANT la notification :
             // les stats à 15 min comptent ainsi dans la note de la game
@@ -280,6 +536,7 @@ async function checkAllPlayers(client) {
     let success = 0;
     let errors = 0;
     const pendingNotifications = new Map();
+    const pendingFlexNotifications = new Map();
     const pendingRenames = [];
 
     for (const player of players) {
@@ -290,7 +547,14 @@ async function checkAllPlayers(client) {
                 WHERE player_id = ? AND active = 1
             `).all(player.id);
 
-            await checkPlayerNewMatches(player, guildEntries, pendingNotifications, pendingRenames);
+            // Parties Flex : uniquement pour les serveurs qui les ont activées (/flex)
+            const flexGuildEntries = guildEntries.filter((g) => isFlexEnabled(g.guild_id));
+
+            await checkPlayer(player, guildEntries, flexGuildEntries, {
+                pendingNotifications,
+                pendingFlexNotifications,
+                pendingRenames,
+            });
             success++;
         } catch (error) {
             errors++;
@@ -304,6 +568,7 @@ async function checkAllPlayers(client) {
 
     await sendPendingRenames(client, pendingRenames);
     await sendPendingNotifications(client, pendingNotifications);
+    await sendPendingFlexNotifications(client, pendingFlexNotifications);
 
     // Timelines qui n'ont pas pu être récupérées lors d'un cycle précédent
     await retryMissingTimelines().catch((error) =>
@@ -317,4 +582,11 @@ async function checkAllPlayers(client) {
     });
 }
 
-module.exports = { checkAllPlayers, sendRankChangeNotification, getPatchVersion };
+module.exports = {
+    checkAllPlayers,
+    sendRankChangeNotification,
+    getPatchVersion,
+    updatePatchVersion,
+    // utilisé par scripts/testFlexNotif.js (fausse notification sur le serveur de test)
+    sendPendingFlexNotifications,
+};
