@@ -73,7 +73,8 @@ function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates 
         .setTitle(title)
         .setDescription(description)
         .setColor(color)
-        .setThumbnail(getChampionIconUrl(participant.championName, patchVersion))
+        // entry.thumbnail : vignette générée (ADC / support avec leur partenaire de lane)
+        .setThumbnail(entry.thumbnail ?? getChampionIconUrl(participant.championName, patchVersion))
         .addFields(
             {
                 name: "🎯 Performance",

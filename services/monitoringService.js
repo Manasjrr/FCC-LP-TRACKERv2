@@ -1,4 +1,6 @@
 const axios = require("axios");
+const FormData = require("form-data");
+const { getLanePartner, buildDuoLaneThumbnail } = require("../utils/thumbnailUtils");
 const { getRecentMatchIds } = require("./riotApiService");
 const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = require("./matchService");
 const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
@@ -134,6 +136,46 @@ async function sendPendingRenames(client, pendingRenames) {
     }
 }
 
+// ─── Vignettes "duo lane" ─────────────────────────────────────────────────────
+// Pour chaque ADC / support : icône du champion + partenaire de botlane en petit.
+// Renseigne entry.thumbnail et retourne les fichiers à joindre au message.
+async function buildDuoLaneThumbnails(entries, match) {
+    const files = [];
+    for (const [index, entry] of entries.slice(0, 9).entries()) {
+        const participant = entry.result.participant;
+        const partner = getLanePartner(participant, match.participants);
+        if (!partner) continue;
+
+        try {
+            const buffer = await buildDuoLaneThumbnail(participant.championName, partner.championName, patchVersion);
+            const name = `duolane_${index}.png`;
+            files.push({ name, buffer });
+            entry.thumbnail = `attachment://${name}`;
+        } catch (error) {
+            logger.warn("MONITOR", `Vignette duo lane impossible pour ${entry.player.riot_id}`, { error: error.message });
+        }
+    }
+    return files;
+}
+
+// ─── Envoi d'un message avec fichiers joints ─────────────────────────────────
+// Via l'API REST Discord avec axios (même principe que le graphique LP :
+// contourne les soucis d'upload de fichiers de discord.js / undici)
+async function sendMessageWithFiles(channelId, { embeds, components }, files) {
+    const form = new FormData();
+    form.append("payload_json", JSON.stringify({
+        embeds: embeds.map((e) => e.toJSON()),
+        components: components.map((c) => c.toJSON()),
+        attachments: files.map((f, id) => ({ id, filename: f.name })),
+    }));
+    files.forEach((f, i) => form.append(`files[${i}]`, f.buffer, f.name));
+
+    return axios.post(`https://discord.com/api/v10/channels/${channelId}/messages`, form, {
+        headers: { ...form.getHeaders(), Authorization: `Bot ${process.env.DISCORD_TOKEN}` },
+        timeout: 15000,
+    });
+}
+
 // ─── Envoi des notifications collectées ──────────────────────────────────────
 async function sendPendingNotifications(client, pendingNotifications) {
     const timelinesRequested = new Set();
@@ -157,21 +199,41 @@ async function sendPendingNotifications(client, pendingNotifications) {
             const channel = await client.channels.fetch(channelId).catch(() => null);
             if (!channel) continue;
 
+            // Coéquipiers / adversaires suivis détectés hors de ce cycle (notification solo)
+            const trackedMates = entries.length === 1
+                ? getTrackedPlayersInMatch(match, guildId).filter((m) => m.id !== entries[0].player.id)
+                : [];
+
+            const buildPayload = () => {
+                if (entries.length > 1) {
+                    const { embeds, rows } = buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion);
+                    return { embeds, components: rows };
+                }
+                const { embed, row } = buildMatchNotifEmbed(entries[0], match, matchId, patchVersion, trackedMates);
+                return { embeds: [embed], components: [row] };
+            };
+
+            // Vignettes "duo lane" (ADC / support + partenaire de botlane)
+            const files = await buildDuoLaneThumbnails(entries, match);
+
+            try {
+                if (files.length) await sendMessageWithFiles(channelId, buildPayload(), files);
+                else await channel.send(buildPayload());
+            } catch (error) {
+                if (!files.length) throw error;
+                // Envoi avec image impossible → notification classique (vignette normale)
+                logger.warn("MONITOR", `Envoi avec vignette duo lane impossible pour ${matchId}, envoi classique`, {
+                    error: error.message,
+                    status: error.response?.status,
+                });
+                for (const entry of entries) delete entry.thumbnail;
+                await channel.send(buildPayload());
+            }
+
             if (entries.length > 1) {
-                const { embeds, rows } = buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion);
-                await channel.send({ embeds, components: rows });
                 logger.info("MONITOR", `Notification groupée envoyée pour ${matchId}`, {
                     players: entries.map((e) => e.player.riot_id),
                 });
-            } else {
-                const entry = entries[0];
-
-                // Coéquipiers / adversaires suivis détectés hors de ce cycle
-                const trackedMates = getTrackedPlayersInMatch(match, guildId)
-                    .filter((m) => m.id !== entry.player.id);
-
-                const { embed, row } = buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates);
-                await channel.send({ embeds: [embed], components: [row] });
             }
 
             for (const { player, result } of entries) {

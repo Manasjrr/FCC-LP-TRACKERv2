@@ -35,6 +35,7 @@ It automatically detects new matches, posts win/loss alerts in designated channe
 - 👥 **Duo detection** — tracked players in the same game are grouped into a single notification (duo header with each player's role + their usual match embeds). Opponents in the same game are shown as a "⚔️ face-off"
 - 🧮 **Player rating (/100)** — role-aware score with a letter grade and its evolution over 7 / 30 days, shown in `/stats`, `/list` and the "🧮 Infos note" button (see [Player Rating](#player-rating))
 - 🎯 **Game rating** — every match notification shows the player's performance in that game, out of 100, according to the role played
+- 🏹 **Bot lane thumbnail** — for ADC and Support games, the notification thumbnail shows the champion played with the bot lane partner's champion in a small badge (generated with Canvas, icons cached in memory)
 - 📊 **Detailed player stats** — rank, winrate, KDA, LP trend, rating, top champions and server leaderboard
 - 📜 **Match history** — last N ranked games (1-25) for any tracked player, via `/history` or the `/stats` button
 - 📈 **LP progression graph** — visual chart of LP gains and losses over time
@@ -158,6 +159,7 @@ FCC-LP-TRACKERv2/
     ├── historyUtils.js     # Match history embed builder
     ├── rankUtils.js        # Rank emoji and ordering helpers
     ├── championUtils.js    # Champion names / ids / icons
+    ├── thumbnailUtils.js   # Bot lane thumbnail (champion + lane partner) generation
     ├── graphUtils.js       # LP graph generation (Canvas)
     ├── weeklyRecap.js      # Weekly recap builder and sender
     └── loggers.js          # Console and file logger
