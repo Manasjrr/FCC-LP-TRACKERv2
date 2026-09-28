@@ -486,7 +486,7 @@ function buildGameEmbed({ gameData, members }) {
     } else if (members.length > 1) {
         kind = "group";
         title = members.length === 2
-            ? `🤝 DuoQ }`
+            ? `🤝 Duo Q `
             : `👥 Groupe de ${members.length} en ${queueName}`;
     } else {
         kind = "solo";
