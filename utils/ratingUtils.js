@@ -112,7 +112,7 @@ const ROLE_PROFILES = {
         vision:     { weight: 6,  metrics: { vision_per_min: [0.3, 0.9] } },
     },
     UTILITY: {
-        combat:     { weight: 25, metrics: { kda: [1.5, 4.0], kill_participation: [0.45, 0.75] } },
+        combat:     { weight: 25, metrics: { kda: [1.5, 4.0], kill_participation: [0.35, 0.75] } },
         vision:     { weight: 25, metrics: { vision_per_min: [1.4, 3.5], control_wards: [1, 6], wards_killed: [0, 8] } },
         objectives: { weight: 10, metrics: { team_grubs: [0, 2], team_heralds: [0.20, 0.65], early_dragons: [0, 2] } },
     },
@@ -197,18 +197,21 @@ function scoreMatch(match, overrides = {}) {
 }
 
 // ─── Récupération des games ───────────────────────────────────────────────────
-function getRatedMatches(playerId) {
+// before (timestamp ms) : ne prend que les games jouées avant cette date
+// → permet de recalculer la note telle qu'elle était dans le passé
+function getRatedMatches(playerId, before = Number.MAX_SAFE_INTEGER) {
     return global.db.prepare(`
         SELECT * FROM match_history
-        WHERE player_id = ? AND is_remake = 0
+        WHERE player_id = ? AND is_remake = 0 AND game_creation < ?
         ORDER BY game_creation DESC
         LIMIT ?
-    `).all(playerId, RATING_MATCH_COUNT);
+    `).all(playerId, before, RATING_MATCH_COUNT);
 }
 
 // ─── Note complète d'un joueur ────────────────────────────────────────────────
-function computePlayerRating(playerId) {
-    const matches = getRatedMatches(playerId);
+// options.before : note telle qu'elle était à cette date (timestamp ms)
+function computePlayerRating(playerId, { before } = {}) {
+    const matches = getRatedMatches(playerId, before);
     const games = matches.length;
 
     if (!games) {
@@ -311,6 +314,97 @@ function computePlayerRating(playerId) {
     };
 }
 
+// ─── Note d'une game (/100) ───────────────────────────────────────────────────
+// Performance en jeu de la game seule, selon le rôle joué (hors résultats / forme)
+// match = ligne match_history → { score, tier, role } ou null (remake, pas de données)
+function computeGameScore(match) {
+    if (!match || match.is_remake) return null;
+    const { score, role } = scoreMatch(match);
+    if (score == null) return null;
+    const value = Math.round(score * 100);
+    return { score: value, tier: getRatingTier(value), role };
+}
+
+// ─── Détail de la note d'une game (barème + points gagnés / perdus) ──────────
+// Chaque catégorie disponible vaut (poids / total des poids disponibles) × 100 pts,
+// répartis à parts égales entre ses stats disponibles. Le malus de rôle s'applique au total.
+function getGameScoreDetails(match) {
+    if (!match || match.is_remake) return null;
+
+    const role = getMatchRole(match);
+    const result = scoreMatch(match);
+    if (result.score == null) return null;
+
+    const profile = ROLE_PROFILES[role];
+    const totalWeight = Object.entries(profile)
+        .filter(([category]) => result.categories[category] != null)
+        .reduce((sum, [, { weight }]) => sum + weight, 0);
+
+    const categories = Object.entries(profile).map(([category, { weight, metrics }]) => {
+        const available = result.categories[category] != null;
+        const max = available ? (weight / totalWeight) * 100 : 0;
+
+        const metricDetails = Object.entries(metrics).map(([metric, bounds]) => {
+            const m = result.metrics[metric];
+            const { label, fmt } = METRICS[metric];
+            return {
+                metric,
+                label,
+                min: fmt(bounds[0]),
+                target: fmt(bounds[1]),
+                display: m ? fmt(m.value) : null,
+                score: m ? m.score : null,
+            };
+        });
+
+        const counted = metricDetails.filter((m) => m.score != null);
+        for (const m of counted) {
+            m.max = max / counted.length;
+            m.points = m.max * m.score;
+        }
+
+        return {
+            category,
+            label: CATEGORY_LABELS[category],
+            weight,
+            available,
+            max,
+            points: counted.reduce((sum, m) => sum + m.points, 0),
+            metrics: metricDetails,
+        };
+    });
+
+    const multiplier = ROLE_PERFORMANCE_MULTIPLIER[role] ?? 1;
+    const rawPoints = categories.reduce((sum, c) => sum + c.points, 0);
+    const score = Math.round(result.score * 100);
+
+    return {
+        role,
+        roleLabel: ROLE_LABELS[role],
+        score,
+        tier: getRatingTier(score),
+        rawPoints,
+        multiplier,
+        categories,
+    };
+}
+
+// ─── Évolution de la note ─────────────────────────────────────────────────────
+// Compare la note actuelle à celle d'il y a `days` jours (recalculée depuis la BDD)
+function getRatingEvolution(playerId, days = 7, current = computePlayerRating(playerId)) {
+    const past = computePlayerRating(playerId, { before: Date.now() - days * 24 * 60 * 60 * 1000 });
+    if (current.empty || past.empty) return null;
+    return { days, current: current.score, past: past.score, diff: current.score - past.score };
+}
+
+// Texte court : "📈 +4 (7j)" / "📉 -2 (7j)" / "➖ =0 (7j)"
+function formatEvolution(evolution) {
+    if (!evolution) return null;
+    const { diff, days } = evolution;
+    const emoji = diff > 0 ? "📈" : diff < 0 ? "📉" : "➖";
+    return `${emoji} ${diff > 0 ? "+" : ""}${diff} (${days}j)`;
+}
+
 // ─── Classement des notes sur un serveur ─────────────────────────────────────
 function getGuildRatingRanking(players) {
     return players
@@ -328,5 +422,9 @@ module.exports = {
     CATEGORY_LABELS,
     getRatingTier,
     computePlayerRating,
+    computeGameScore,
+    getGameScoreDetails,
+    getRatingEvolution,
+    formatEvolution,
     getGuildRatingRanking,
 };

@@ -3,6 +3,7 @@ const { getRecentMatchIds } = require("./riotApiService");
 const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = require("./matchService");
 const { buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
+const { computeGameScore } = require("../utils/ratingUtils");
 const logger = require("../utils/loggers");
 
 // ─── Version du patch (Data Dragon) ───────────────────────────────────────────
@@ -139,10 +140,18 @@ async function sendPendingNotifications(client, pendingNotifications) {
 
     for (const { channelId, guildId, matchId, match, entries } of pendingNotifications.values()) {
         try {
-            // Timeline récupérée une seule fois par match
+            // Timeline récupérée une seule fois par match, AVANT la notification :
+            // les stats à 15 min comptent ainsi dans la note de la game
             if (!timelinesRequested.has(matchId)) {
                 timelinesRequested.add(matchId);
-                fetchAndCacheTimeline(matchId, match).catch(() => { });
+                await fetchAndCacheTimeline(matchId, match).catch(() => { });
+            }
+
+            // Note de la game (/100) de chaque joueur, depuis la ligne match_history
+            for (const entry of entries) {
+                const row = global.db.prepare(`SELECT * FROM match_history WHERE player_id = ? AND match_id = ?`)
+                    .get(entry.player.id, matchId);
+                entry.gameScore = computeGameScore(row);
             }
 
             const channel = await client.channels.fetch(channelId).catch(() => null);

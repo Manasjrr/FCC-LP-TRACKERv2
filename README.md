@@ -33,11 +33,12 @@ It automatically detects new matches, posts win/loss alerts in designated channe
 
 - 🔍 **Automatic match detection** — polls the Riot API every 2 minutes to catch new ranked games
 - 👥 **Duo detection** — tracked players in the same game are grouped into a single notification (duo header with each player's role + their usual match embeds). Opponents in the same game are shown as a "⚔️ face-off"
-- 🧮 **Player rating (/100)** — role-aware score with a letter grade, shown in `/stats`, `/list` and the "🧮 Infos note" button (see [Player Rating](#player-rating))
+- 🧮 **Player rating (/100)** — role-aware score with a letter grade and its evolution over 7 / 30 days, shown in `/stats`, `/list` and the "🧮 Infos note" button (see [Player Rating](#player-rating))
+- 🎯 **Game rating** — every match notification shows the player's performance in that game, out of 100, according to the role played
 - 📊 **Detailed player stats** — rank, winrate, KDA, LP trend, rating, top champions and server leaderboard
 - 📜 **Match history** — last N ranked games (1-25) for any tracked player, via `/history` or the `/stats` button
 - 📈 **LP progression graph** — visual chart of LP gains and losses over time
-- 🏆 **Weekly recap** — automated summary posted every **Friday at 6:00 PM (Paris time)**
+- 🏆 **Weekly recap** — automated summary posted every **Friday at 6:00 PM (Paris time)**, with each player's rating and its weekly evolution
 - ➕ **Player management** — add, remove and list tracked accounts per server
 - ⚡ **API-efficient** — every stat is extracted from data the bot already downloads (match + timeline): a match shared by several tracked players is only fetched once, and timelines are cached
 
@@ -71,6 +72,10 @@ Each player gets a score out of **100** computed from their **30 most recent ran
 - Support performance has a −10% modifier
 - Games recorded without detailed stats are rated on KDA only
 - Fewer than 10 games: the rating is **provisional** and pulled towards 50
+
+**Evolution:** the rating can be recomputed as it was at any past date (using only the games played before that date), which gives the evolution over 7 / 30 days in `/stats` and "Infos note", and over the week in the weekly recap — without storing any history.
+
+**Game rating:** the in-game performance of a single game (role-based, results and form excluded), scaled to 100. Shown in each match notification.
 
 **Grades:**
 
@@ -235,7 +240,9 @@ The `joueur` options support autocompletion with the players tracked on the serv
 | 📜 Match History | Match history (choose the number of games) |
 | 🧮 Infos note | Rating breakdown: score, server rating ranking, main role, categories, per-stat details vs. targets, results and form |
 
-**Match notification button:** 📊 Stats détaillées — full game breakdown (teams, lane opponent comparison, @15 timeline diffs), with an option to share it publicly.
+**Match notification button:** 📊 Stats détaillées — full game breakdown (teams, lane opponent comparison, @15 timeline diffs), with two buttons:
+- 📢 Envoyer à tout le monde — share the breakdown publicly
+- 🧮 Détail de la note — game rating breakdown: for each stat of the role played, its value, its scale (min → target), the points earned / possible and the points lost, plus a summary of the stats that cost the most points
 
 ---
 

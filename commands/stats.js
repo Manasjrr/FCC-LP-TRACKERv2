@@ -10,7 +10,7 @@ const logger = require("../utils/loggers");
 const { getSummonerByPuuid, getSoloQData, getChampionMasteries } = require("../services/riotApiService");
 const { getPatchVersion } = require("../services/monitoringService");
 const { getChampionIdByName } = require("../utils/championUtils");
-const { computePlayerRating, ROLE_LABELS } = require("../utils/ratingUtils");
+const { computePlayerRating, getRatingEvolution, formatEvolution, ROLE_LABELS } = require("../utils/ratingUtils");
 const {
     getPlayerByRiotId,
     getServerPosition,
@@ -267,6 +267,7 @@ function getMatchAnalysis(player) {
         streakType,
         rating: computePlayerRating(player.id),
     };
+    analysis.ratingEvolution = getRatingEvolution(player.id, 7, analysis.rating);
 
     statsCache.set(cacheKey, { data: analysis, timestamp: Date.now() });
     logger.info('DB', `Analyse matchs calculée pour ${player.riot_id}`, {
@@ -374,6 +375,7 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
         ? "❔ Pas encore de note (aucune game)"
         : `${rating.tier.label}\n🧮 **${rating.score}/100** (${rating.tier.grade})` +
           (rating.mainRole !== "DEFAULT" ? ` • ${ROLE_LABELS[rating.mainRole]}` : "") +
+          (analysis.ratingEvolution ? ` • ${formatEvolution(analysis.ratingEvolution)}` : "") +
           (rating.provisional ? " • *provisoire*" : "");
 
     const riotIdFormatted = formatRiotIdForUrl(player.riot_id);

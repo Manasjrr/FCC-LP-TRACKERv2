@@ -1,6 +1,19 @@
 const { EmbedBuilder } = require('discord.js');
 const { getRankEmoji, getRankOrder } = require('./rankUtils');
 const logger = require('./loggers');
+const { computePlayerRating } = require('./ratingUtils');
+
+// ─── Note de la semaine d'un joueur ───────────────────────────────────────────
+// Note en fin de semaine + évolution depuis le début de la semaine
+function getPlayerWeeklyRating(player, weekStart, weekEnd) {
+    const end = computePlayerRating(player.id, { before: weekEnd.getTime() + 1 });
+    const start = computePlayerRating(player.id, { before: weekStart.getTime() });
+
+    return {
+        rating: end.empty ? null : end,
+        ratingDiff: end.empty || start.empty ? null : end.score - start.score,
+    };
+}
 
 // ─── Stats hebdomadaires d'un joueur ─────────────────────────────────────────
 function getPlayerWeeklyStats(player, weekStart, weekEnd) {
@@ -115,6 +128,7 @@ async function generateRecapForGuild(guildId, weekStart, weekEnd) {
             }
 
             const topChampion = getPlayerTopChampion(player, weekStart, weekEnd);
+            const weeklyRating = getPlayerWeeklyRating(player, weekStart, weekEnd);
             const netLP = calculateNetLP(
                 weekStats.week_start_rank, weekStats.week_start_lp,
                 weekStats.week_end_rank, weekStats.week_end_lp
@@ -139,6 +153,7 @@ async function generateRecapForGuild(guildId, weekStart, weekEnd) {
                 week_end_rank: weekStats.week_end_rank,
                 week_end_lp: weekStats.week_end_lp,
                 current_rank: player.last_rank,
+                ...weeklyRating,
             });
         } catch (error) {
             logger.error('RECAP', `Erreur stats pour ${player.riot_id}`, { error: error.message });
@@ -197,6 +212,14 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
         description += `${medal} **${player.riot_id}**\n`;
         description += `├─ 🎮 **${player.total_games} games** (${player.wins}W • ${player.losses}L - ${player.winrate}% WR)\n`;
         description += `├─ ${lpEmoji} **${lpSign}${player.total_lp_change} LP** • ${rankDisplay}\n`;
+        if (player.rating) {
+            const diffText = player.ratingDiff == null
+                ? ''
+                : player.ratingDiff > 0 ? ` • 📈 +${player.ratingDiff} cette semaine`
+                : player.ratingDiff < 0 ? ` • 📉 ${player.ratingDiff} cette semaine`
+                : ' • ➖ stable';
+            description += `├─ 🧮 **Note :** ${player.rating.score}/100 (${player.rating.tier.grade})${diffText}\n`;
+        }
         description += `├─ 🦹 **Champion favori :** ${player.most_played_champion} (${player.champion_games} games - ${player.champion_winrate}% WR)\n`;
         description += `└─ ⚔️ **KDA moyen :** ${Number(player.avg_kills).toFixed(1)}/${Number(player.avg_deaths).toFixed(1)}/${Number(player.avg_assists).toFixed(1)}\n\n`;
     });
@@ -310,4 +333,4 @@ async function sendWeeklyRecap(client) {
     }
 }
 
-module.exports = { sendWeeklyRecap };
+module.exports = { sendWeeklyRecap, generateRecapForGuild, createWeeklyRecapEmbed };

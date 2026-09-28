@@ -2,8 +2,8 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder
 const { generateLPGraph } = require("../utils/graphUtils");
 const { getPlayerMatches, createHistoryEmbedWithColors } = require("../utils/historyUtils");
 const { getPlayerById, getGuildPlayers } = require("../utils/playerUtils");
-const { computePlayerRating, getGuildRatingRanking } = require("../utils/ratingUtils");
-const { buildRatingEmbed } = require("../embeds/ratingEmbed");
+const { computePlayerRating, getGuildRatingRanking, getRatingEvolution, getGameScoreDetails } = require("../utils/ratingUtils");
+const { buildRatingEmbed, buildGameScoreEmbed } = require("../embeds/ratingEmbed");
 const { buildDetailedStatsEmbed } = require("../embeds/detailedStatsEmbed");
 const { getMatch, getTimeline } = require("../services/riotApiService");
 const { storeTimelineStats } = require("../services/matchService");
@@ -81,28 +81,33 @@ async function handleButton(interaction) {
 
         // Graphique LP
         if (customId.startsWith("lp_chart_")) {
-            return handleLPChart(interaction);
+            return await handleLPChart(interaction);
         }
 
         // Historique matchs
         if (customId.startsWith("match_history_")) {
-            return handleMatchHistoryButton(interaction);
+            return await handleMatchHistoryButton(interaction);
         }
 
         // Stats détaillées
         if (customId.startsWith("stats|")) {
-            return handleDetailedStats(interaction);
+            return await handleDetailedStats(interaction);
         }
 
         // Partager stats
         if (customId.startsWith("share|")) {
-            return handleShare(interaction);
+            return await handleShare(interaction);
+        }
+
+        // Détail de la note de la game
+        if (customId.startsWith("gamescore|")) {
+            return await handleGameScore(interaction);
         }
 
         // Refresh
         if (customId === "refresh_stats") {
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-            return interaction.followUp({
+            return await interaction.followUp({
                 content: "🔄 **Cache actualisé !**\nRelance `/stats` pour voir les nouvelles données.",
                 flags: MessageFlags.Ephemeral,
             });
@@ -110,12 +115,12 @@ async function handleButton(interaction) {
 
         // Infos note
         if (customId.startsWith("rating_info_")) {
-            return handleRatingInfo(interaction);
+            return await handleRatingInfo(interaction);
         }
 
         // Inconnu
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        return interaction.followUp({
+        return await interaction.followUp({
             content: `❓ Bouton non reconnu : ${customId}`,
             flags: MessageFlags.Ephemeral,
         });
@@ -186,8 +191,12 @@ async function handleRatingInfo(interaction) {
         guild: interaction.guildId,
     });
 
+    const evolutions = [7, 30]
+        .map((days) => getRatingEvolution(playerId, days, rating))
+        .filter(Boolean);
+
     await interaction.editReply({
-        embeds: [buildRatingEmbed(player, rating, index >= 0 ? { position: index + 1, total: ranking.length } : null)],
+        embeds: [buildRatingEmbed(player, rating, index >= 0 ? { position: index + 1, total: ranking.length } : null, evolutions)],
     });
 }
 
@@ -268,10 +277,57 @@ async function handleDetailedStats(interaction) {
         .setLabel("📢 Envoyer à tout le monde")
         .setStyle(ButtonStyle.Primary);
 
-    await interaction.editReply({
-        embeds: [embed],
-        components: [new ActionRowBuilder().addComponents(shareButton)],
+    const row = new ActionRowBuilder().addComponents(shareButton);
+
+    // Bouton "Détail de la note" : identifié par la ligne match_history (les custom_id
+    // Discord sont limités à 100 caractères → pas de place pour matchId + puuid)
+    const matchRow = global.db.prepare(`
+        SELECT mh.id FROM match_history mh
+        JOIN players p ON p.id = mh.player_id
+        WHERE mh.match_id = ? AND p.puuid = ? AND mh.is_remake = 0
+    `).get(matchId, puuid);
+
+    if (matchRow) {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`gamescore|${matchRow.id}`)
+                .setLabel("🧮 Détail de la note")
+                .setStyle(ButtonStyle.Secondary)
+        );
+    }
+
+    await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+// ─── Détail de la note d'une game ─────────────────────────────────────────────
+async function handleGameScore(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    const matchRowId = Number(interaction.customId.split("|")[1]);
+
+    const match = global.db.prepare(`
+        SELECT mh.*, p.riot_id FROM match_history mh
+        JOIN players p ON p.id = mh.player_id
+        WHERE mh.id = ?
+    `).get(matchRowId);
+    const matchId = match?.match_id;
+
+    const details = getGameScoreDetails(match);
+    if (!details) {
+        return interaction.editReply({
+            content: match?.is_remake
+                ? "⚪ Pas de note pour un remake."
+                : "❌ Note indisponible pour cette game.",
+        });
+    }
+
+    logger.info("HANDLER", `Détail de la note consulté par ${interaction.user.tag}`, {
+        matchId,
+        player: match.riot_id,
+        score: details.score,
     });
+
+    await interaction.editReply({ embeds: [buildGameScoreEmbed(details, match, match.riot_id)] });
 }
 
 // ─── Partager ─────────────────────────────────────────────────────────────────

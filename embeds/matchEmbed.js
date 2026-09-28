@@ -92,6 +92,15 @@ function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates 
             }
         );
 
+    // Note de la game (performance selon le rôle joué) — absente pour un remake
+    if (entry.gameScore) {
+        embed.addFields({
+            name: "🧮 Note de la game",
+            value: `**${entry.gameScore.score}/100** (${entry.gameScore.tier.grade})`,
+            inline: true,
+        });
+    }
+
     if (positionText) {
         embed.addFields({
             name: "🏅 Classement serveur",
