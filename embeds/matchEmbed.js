@@ -20,11 +20,6 @@ const ROLE_EMOJIS = {
     UTILITY: "🛡️",
 };
 
-const QUEUE_NAMES = {
-    420: "SoloQ",
-    440: "Flex",
-};
-
 // Ordre d'affichage des joueurs d'un groupe
 const ROLE_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"];
 
@@ -163,21 +158,26 @@ function buildDuoPlayerBlock(entry) {
     const lpText = finalLpChange >= 0 ? `+${finalLpChange} LP` : `${finalLpChange} LP`;
     const lpEmoji = finalLpChange >= 0 ? "📈" : "📉";
 
-    const header = `${ROLE_EMOJIS[role] ?? "❓"} **[${player.riot_id}](${getDpmUrl(player.riot_id)})** · ${participant.championName}`;
+    const header = `${ROLE_EMOJIS[role] ?? "❓"} **[${player.riot_id}](${getDpmUrl(player.riot_id)})**`;
 
+    // Lignes courtes (une info par ligne) pour éviter les retours à la ligne sur mobile
     const lines = [
-        `⚔️ **${kills} / ${deaths} / ${assists}** · ${kdaRatio} KDA`
-            + (entry.gameScore ? `  ·  🧮 **${entry.gameScore.score}**/100 (${entry.gameScore.tier.grade})` : ""),
+        `🎮 ${participant.championName}`,
+        `⚔️ **${kills}/${deaths}/${assists}** · ${kdaRatio} KDA`,
     ];
+    if (entry.gameScore) {
+        lines.push(`🧮 **${entry.gameScore.score}**/100 (${entry.gameScore.tier.grade})`);
+    }
     if (!isRemake) {
-        lines.push(`${lpEmoji} **${lpText}**  ·  ${getRankEmoji(currentRank)} ${currentRank} · ${currentLP} LP`);
+        lines.push(`${lpEmoji} **${lpText}**`);
+        lines.push(`${getRankEmoji(currentRank)} ${currentRank} · ${currentLP} LP`);
     }
     if (oldRank && oldRank !== currentRank) {
         lines.push(`🏆 ${oldRank} → **${currentRank}**`);
     }
     if (positionBefore && positionAfter && positionBefore.total > 0 && positionBefore.position !== positionAfter.position) {
         const arrow = positionAfter.position < positionBefore.position ? "⬆️" : "⬇️";
-        lines.push(`🏅 #${positionBefore.position} → **#${positionAfter.position}** sur ${positionAfter.total} ${arrow}`);
+        lines.push(`🏅 #${positionBefore.position} → **#${positionAfter.position}**/${positionAfter.total} ${arrow}`);
     }
     const multiKillText = getMultiKillText(participant);
     if (multiKillText) lines.push(multiKillText);
@@ -192,14 +192,12 @@ function buildDuoMatchEmbed(entries, match, matchId, patchVersion) {
     const first = entries[0].result;
     const { isRemake } = first;
     const win = first.participant.win;
-    const groupLabel = entries.length === 2 ? "EN DUO" : `EN GROUPE DE ${entries.length}`;
-
-    const title = isRemake ? `⚪ REMAKE ${groupLabel}` : win ? `🟢 VICTOIRE ${groupLabel}` : `🔴 DÉFAITE ${groupLabel}`;
+    // Titre court pour qu'il tienne sur une ligne à côté de la vignette (mobile)
+    const title = isRemake ? "⚪ REMAKE" : win ? "🟢 VICTOIRE" : "🔴 DÉFAITE";
     const color = isRemake ? 0x808080 : win ? 0x2ecc71 : 0xe74c3c;
 
-    const subtitle = [QUEUE_NAMES[match.queueId], `⏱️ ${Math.floor(match.gameDuration / 60)} min`]
-        .filter(Boolean)
-        .join("  ·  ");
+    const groupLabel = entries.length === 2 ? "👥 DuoQ" : `👥 Groupe de ${entries.length}`;
+    const subtitle = `${groupLabel} · ⏱️ ${Math.floor(match.gameDuration / 60)} min`;
 
     const parts = [`-# ${subtitle}`];
     if (isRemake) parts.push("*Cette partie ne compte pas dans les statistiques.*");
