@@ -19,9 +19,59 @@ function getDailyLogFile() {
 }
 
 // Écriture dans un fichier
+// Les lignes sont regroupées puis écrites en asynchrone toutes les 200 ms :
+// appendFileSync bloquait tout le bot (Discord, monitoring) à chaque ligne de log
+const FLUSH_DELAY = 200;
+const pending = new Map(); // chemin → lignes en attente
+let flushTimer = null;
+let flushing = false;
+
 function writeToFile(filePath, message) {
-    fs.appendFileSync(filePath, message + '\n', 'utf8');
+    let lines = pending.get(filePath);
+    if (!lines) {
+        lines = [];
+        pending.set(filePath, lines);
+    }
+    lines.push(message);
+    scheduleFlush();
 }
+
+function scheduleFlush() {
+    if (flushTimer || flushing) return;
+    flushTimer = setTimeout(flush, FLUSH_DELAY);
+    flushTimer.unref();
+}
+
+// Une seule écriture en cours à la fois → l'ordre des lignes est conservé
+function flush() {
+    flushTimer = null;
+    if (!pending.size) return;
+
+    const batch = [...pending];
+    pending.clear();
+    flushing = true;
+
+    let remaining = batch.length;
+    for (const [filePath, lines] of batch) {
+        fs.appendFile(filePath, lines.join('\n') + '\n', 'utf8', (err) => {
+            if (err) console.error(`[LOGGER] Écriture impossible dans ${filePath} : ${err.message}`);
+            if (--remaining === 0) {
+                flushing = false;
+                if (pending.size) scheduleFlush();
+            }
+        });
+    }
+}
+
+// Arrêt du process (crash compris) : les lignes en attente sont écrites tout de suite
+process.on('exit', () => {
+    for (const [filePath, lines] of pending) {
+        try {
+            fs.appendFileSync(filePath, lines.join('\n') + '\n', 'utf8');
+        } catch { /* rien de plus à faire à l'arrêt */ }
+    }
+    pending.clear();
+});
 
 // Niveaux de log
 const LEVELS = {

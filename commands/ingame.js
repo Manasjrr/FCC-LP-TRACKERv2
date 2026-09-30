@@ -642,7 +642,8 @@ module.exports = {
             if (embeds.length >= MESSAGE_EMBEDS_MAX) break;
             const embed = buildGameEmbed(game, tr);
             const size = JSON.stringify(embed.toJSON()).length;
-            if (totalChars + size > MESSAGE_CHARS_MAX) break;
+            // Toujours au moins une partie affichée (sinon embeds[-1] plus bas)
+            if (embeds.length && totalChars + size > MESSAGE_CHARS_MAX) break;
             totalChars += size;
             embeds.push(embed);
         }

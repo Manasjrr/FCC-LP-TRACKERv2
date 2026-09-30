@@ -129,6 +129,7 @@ module.exports = {
         sortedByRank: "🏆 *Sorted by rank (highest first)*",
         provisional: "*prov.*",
         userNotFound: "⚠️ User/Channel not found",
+        more: ({ count }) => `*… and ${count} more ${plural(count, "account", "accounts")}*`,
         dpmLeaderboard: "ℹ️ DPM leaderboard",
     },
 
@@ -412,6 +413,7 @@ module.exports = {
         flexRemake: "⚪ FLEX REMAKE",
         flexFaceOff: "⚔️ FLEX FACE-OFF",
         flexVictory: "🟢 FLEX VICTORY",
+        flexUnranked: "Unranked in Flex",
         flexDefeat: "🔴 FLEX DEFEAT",
         trackedPlayers: "👥 {count} tracked players",
         teamVictory: "🟢 Victory",

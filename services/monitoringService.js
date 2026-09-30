@@ -1,13 +1,13 @@
 const axios = require("axios");
 const FormData = require("form-data");
 const { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, buildGroupGif, TEAM_COLORS } = require("../utils/thumbnailUtils");
-const { getRecentMatchIds, getMatch, getTimeline } = require("./riotApiService");
+const { getRecentMatchIds, getMatch, getTimeline, getFlexData } = require("./riotApiService");
 const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
 const { extractMatchStats, extractEarlyDragons, extractLaneDiffs15 } = require("../utils/matchStatsUtils");
 const { isFlexEnabled, getGroupThumbnailStyle } = require("../utils/guildSettings");
 const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = require("./matchService");
-const { isSameTeamGroup, sortEntriesByRole, buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildFlexMatchEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
+const { isSameTeamGroup, sortEntriesByRole, buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildFlexMatchEmbed, buildStatsButtonRows, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
 const { computeGameScore } = require("../utils/ratingUtils");
 const { getTranslator } = require("../utils/i18n");
@@ -254,9 +254,7 @@ async function getFlexTimeline(matchId) {
     const cached = timelineCache.getTimeline(matchId);
     if (cached) return cached;
     try {
-        const timeline = await getTimeline(matchId);
-        timelineCache.setTimeline(matchId, timeline);
-        return timeline;
+        return timelineCache.setTimeline(matchId, await getTimeline(matchId));
     } catch (error) {
         logger.warn("MONITOR", `Timeline Flex indisponible pour ${matchId}, note sans stats de lane`, {
             status: error.response?.status,
@@ -285,10 +283,34 @@ function computeFlexGameScore(match, participant, timeline) {
     return computeGameScore(row);
 }
 
+// Rang Flex actuel du joueur ("GOLD II", LP) — null si l'appel échoue
+// (la notification part alors sans le rang)
+async function getFlexRank(player) {
+    try {
+        const flex = await getFlexData(player.puuid);
+        return flex ? { rank: `${flex.tier} ${flex.rank}`, lp: flex.leaguePoints } : { rank: "UNRANKED", lp: 0 };
+    } catch (error) {
+        logger.warn("MONITOR", `Rang Flex indisponible pour ${player.riot_id}`, {
+            status: error.response?.status,
+            error: error.message,
+        });
+        return null;
+    }
+}
+
 async function sendPendingFlexNotifications(client, pendingFlexNotifications) {
+    // Rang Flex : 1 appel par joueur et par cycle, partagé entre les serveurs
+    const flexRanks = new Map();
+
     for (const { channelId, guildId, matchId, match, entries: rawEntries } of pendingFlexNotifications.values()) {
         const entries = sortEntriesByRole(rawEntries);
         try {
+            for (const entry of entries) {
+                if (entry.flexRank !== undefined) continue; // déjà fourni (script de test)
+                if (!flexRanks.has(entry.player.id)) flexRanks.set(entry.player.id, await getFlexRank(entry.player));
+                entry.flexRank = flexRanks.get(entry.player.id);
+            }
+
             // Timeline (1 appel) seulement si une note en a besoin : pas de note sur
             // un remake, et la note d'un jungler n'utilise aucune stat de la timeline
             const needsTimeline = match.gameDuration >= REMAKE_MAX_DURATION
@@ -309,7 +331,8 @@ async function sendPendingFlexNotifications(client, pendingFlexNotifications) {
 
             const buildPayload = () => ({
                 embeds: [buildFlexMatchEmbed(entries, match, matchId, patchVersion, getTranslator(guildId))],
-                components: [],
+                // Même boutons qu'en SoloQ : tableau des 10 joueurs + détail de la note
+                components: buildStatsButtonRows(entries, matchId),
             });
 
             try {
@@ -542,7 +565,26 @@ async function sendPendingNotifications(client, pendingNotifications) {
 }
 
 // ─── Boucle principale ────────────────────────────────────────────────────────
+// Un cycle peut dépasser l'intervalle (beaucoup de joueurs, rate limit 429) :
+// on ignore le déclenchement suivant plutôt que de traiter deux fois les mêmes matchs
+let isChecking = false;
+
 async function checkAllPlayers(client) {
+    if (isChecking) {
+        logger.warn("MONITOR", `Vérification précédente encore en cours, cycle ignoré`);
+        return;
+    }
+    isChecking = true;
+    try {
+        await runCheckAllPlayers(client);
+    } catch (error) {
+        logger.error("MONITOR", `Erreur cycle de vérification`, { error: error.message, stack: error.stack });
+    } finally {
+        isChecking = false;
+    }
+}
+
+async function runCheckAllPlayers(client) {
     logger.info("MONITOR", `Début de la vérification`, {
         timestamp: new Date().toISOString(),
     });

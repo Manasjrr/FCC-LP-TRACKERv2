@@ -65,8 +65,7 @@ async function fetchAndCacheTimeline(matchId, matchInfo) {
     let timeline = timelineCache.getTimeline(matchId);
     if (!timeline) {
         try {
-            timeline = await getTimeline(matchId);
-            timelineCache.setTimeline(matchId, timeline);
+            timeline = timelineCache.setTimeline(matchId, await getTimeline(matchId));
             logger.info("MATCH", `Timeline cachée pour ${matchId}`);
         } catch (error) {
             logger.warn("MATCH", `Échec récupération timeline pour ${matchId} (sera retentée au prochain cycle)`, {

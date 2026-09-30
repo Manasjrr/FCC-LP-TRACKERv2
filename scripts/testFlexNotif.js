@@ -219,6 +219,13 @@ function buildFakeGame() {
     return { match, trackedPlayers, timeline: buildTimeline(participants) };
 }
 
+const FAKE_TIERS = ["SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND"];
+const FAKE_DIVISIONS = ["IV", "III", "II", "I"];
+function fakeFlexRank() {
+    if (Math.random() < 0.15) return { rank: "UNRANKED", lp: 0 };
+    return { rank: `${FAKE_TIERS[rand(0, 4)]} ${FAKE_DIVISIONS[rand(0, 3)]}`, lp: rand(0, 99) };
+}
+
 // ─── Client minimal : envoi via l'API REST Discord ───────────────────────────
 const discordClient = {
     channels: {
@@ -250,7 +257,8 @@ const discordClient = {
         guildId: GUILD_ID,
         matchId,
         match,
-        entries: trackedPlayers.map(({ player, participant }) => ({ player, result: { participant } })),
+        // Faux rang Flex (sinon le bot appellerait l'API Riot avec un faux puuid)
+        entries: trackedPlayers.map(({ player, participant }) => ({ player, result: { participant }, flexRank: fakeFlexRank() })),
     }]]);
 
     console.log(`📨 Envoi d'une fausse Flex (${RESULT}, ${trackedPlayers.length} joueur(s) suivi(s)) dans le salon ${CHANNEL_ID}...`);

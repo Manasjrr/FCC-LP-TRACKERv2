@@ -1,22 +1,25 @@
 const logger = require("../utils/loggers");
+const { createTtlCache } = require("./ttlCache");
 
-const matchCache = new Map();
 const TTL = 2880 * 60 * 1000; // 48h
+// ~150-300 Ko par match en mémoire : au-delà, les plus anciens sont re-téléchargés si besoin
+const MAX_MATCHES = 300;
+
+const matchCache = createTtlCache({
+    ttl: TTL,
+    maxSize: MAX_MATCHES,
+    onExpire: (matchId) => logger.info("CACHE", `Match expiré : ${matchId}`),
+});
 
 function setMatch(matchId, matchInfo) {
     matchCache.set(matchId, matchInfo);
     logger.info("CACHE", `Match mis en cache : ${matchId}`, {
         size: matchCache.size,
     });
-
-    setTimeout(() => {
-        matchCache.delete(matchId);
-        logger.info("CACHE", `Match expiré : ${matchId}`);
-    }, TTL);
 }
 
 function getMatch(matchId) {
-    return matchCache.get(matchId) ?? null;
+    return matchCache.get(matchId);
 }
 
 function hasMatch(matchId) {

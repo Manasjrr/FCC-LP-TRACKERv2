@@ -31,7 +31,7 @@ module.exports = {
         }
 
         // ── Validation du format ──────────────────────────────────────────────
-        const [gameName, tagLine] = riotId.split("#");
+        const [gameName, tagLine] = riotId.split("#").map((part) => part?.trim());
         if (!gameName || !tagLine) {
             logger.warn('COMMAND', `Format Riot ID invalide : ${riotId}`, { user: interaction.user.tag });
             return interaction.editReply(tr("add.invalidFormat"));
@@ -55,6 +55,10 @@ module.exports = {
         try {
             const account = await getAccountByRiotId(gameName, tagLine);
             const puuid = account.puuid;
+            // Riot ID officiel (casse exacte) plutôt que la saisie de l'utilisateur
+            const canonicalRiotId = account.gameName && account.tagLine
+                ? `${account.gameName}#${account.tagLine}`
+                : riotId;
             logger.info('COMMAND', `PUUID récupéré pour ${riotId}`, {
                 puuid: puuid.substring(0, 8) + '...'
             });
@@ -116,7 +120,7 @@ module.exports = {
                     interaction.user.id,
                     interaction.guildId,
                     interaction.channelId,
-                    riotId,
+                    canonicalRiotId,
                     puuid,
                     lastMatchId,
                     currentLP,
@@ -138,6 +142,14 @@ module.exports = {
                 SELECT active FROM player_guilds
                 WHERE player_id = ? AND guild_id = ?
             `).get(playerId, interaction.guildId);
+
+            if (existingInGuild?.active) {
+                // Déjà suivi sur ce serveur (Riot ID saisi avec une autre casse / un ancien pseudo)
+                logger.info('COMMAND', `Compte déjà surveillé sur ce serveur : ${canonicalRiotId}`, {
+                    guild: interaction.guildId
+                });
+                return interaction.editReply(tr("add.alreadyTracked"));
+            }
 
             if (existingInGuild) {
                 // Entrée existante (active = 0) → réactiver
@@ -169,7 +181,7 @@ module.exports = {
             const embed = new EmbedBuilder()
                 .setTitle(tr("add.title"))
                 .setDescription(
-                    tr("add.description", { riotId, rank: currentRank, lp: currentLP }) +
+                    tr("add.description", { riotId: existingPlayer?.riot_id ?? canonicalRiotId, rank: currentRank, lp: currentLP }) +
                     (isAlreadyKnown ? `\n\n${tr("add.sharedStats")}` : "")
                 )
                 .setColor(0x00ff00)
@@ -184,7 +196,7 @@ module.exports = {
             } else if (error.response?.status === 403) {
                 logger.error('API', `Clé API Riot invalide ou expirée`, { status: 403 });
                 await interaction.editReply(tr("add.invalidApiKey"));
-            } else if (error.code === 'SQLITE_CONSTRAINT') {
+            } else if (error.code?.startsWith('SQLITE_CONSTRAINT')) {
                 logger.error('DB', `Contrainte BDD violée pour ${riotId}`, { error: error.message });
                 await interaction.editReply(tr("add.alreadyInDb"));
             } else {

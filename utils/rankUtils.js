@@ -38,13 +38,21 @@ function getRankOrder(rank, lp = 0) {
     else if (rankLower.includes('master'))      tierOrder = 8;
     else if (rankLower.includes('challenger'))  tierOrder = 10;
 
-    if      (rankLower.includes(' iv'))  divisionOrder = 1;
+    // Master+ : Riot renvoie "MASTER I" → pas de division, une seule échelle de LP
+    const isApex = tierOrder >= 8;
+
+    if      (isApex)                     divisionOrder = 5;
+    else if (rankLower.includes(' iv'))  divisionOrder = 1;
     else if (rankLower.includes(' iii')) divisionOrder = 2;
     else if (rankLower.includes(' ii'))  divisionOrder = 3;
     else if (rankLower.includes(' i'))   divisionOrder = 4;
-    else divisionOrder = 5; // Master+
 
-    const totalScore = (tierOrder * 400) + (divisionOrder * 100) + lp;
+    // Master / GM / Challenger partagent la même échelle de LP, qui démarre juste
+    // après Diamant I 100 LP (sinon Diamant I → Master comptait +400 LP)
+    const APEX_BASE = 7 * 400 + 4 * 100 + 100;
+    const totalScore = isApex
+        ? APEX_BASE + lp
+        : (tierOrder * 400) + (divisionOrder * 100) + lp;
 
     return {
         order:         tierOrder,
