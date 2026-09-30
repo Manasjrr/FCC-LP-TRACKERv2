@@ -5,8 +5,14 @@ const { getChampionIconUrl } = require("./championUtils");
 
 // ─── Icônes de champions (Data Dragon, mises en cache en mémoire) ────────────
 const iconCache = new Map(); // "patch|champion" → Image
+let iconCachePatch = null;
 
 async function getChampionIcon(championName, patchVersion) {
+    // Nouveau patch : les icônes de l'ancien ne serviront plus, on libère la mémoire
+    if (iconCachePatch !== patchVersion) {
+        iconCache.clear();
+        iconCachePatch = patchVersion;
+    }
     const key = `${patchVersion}|${championName}`;
     if (iconCache.has(key)) return iconCache.get(key);
 

@@ -49,8 +49,11 @@ function rankToLP(rankStr, lp = 0) {
         logger.warn?.('GRAPH', `Rang inconnu ignoré: "${rankStr}"`);
         return 0;
     }
-    const divIdx = DIVS.map(d => d.toLowerCase()).indexOf((divRaw || 'iv').toLowerCase());
     const safeLp = Math.max(0, Number(lp) || 0);
+    // Master+ : pas de division (Riot renvoie "MASTER I") et LP non plafonnés à 100
+    if (tier.base >= 2800) return tier.base + safeLp;
+
+    const divIdx = DIVS.map(d => d.toLowerCase()).indexOf((divRaw || 'iv').toLowerCase());
     return tier.base + Math.max(0, divIdx) * 100 + (safeLp % 100);
 }
 

@@ -50,12 +50,26 @@ const CHAMPION_IDS = Object.fromEntries(
     Object.entries(CHAMPION_NAMES).map(([id, name]) => [name, Number(id)])
 );
 
+// Recherche tolérante : les matchs Riot donnent le nom technique ("LeeSin",
+// "Chogath", "MonkeyKing"...) et non le nom affiché ("Lee Sin", "Cho'Gath"...)
+const normalizeChampionName = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+const CHAMPION_IDS_NORMALIZED = {
+    ...Object.fromEntries(
+        Object.entries(CHAMPION_NAMES).map(([id, name]) => [normalizeChampionName(name), Number(id)])
+    ),
+    // Noms techniques différents du nom affiché
+    monkeyking: 62,
+    nunu: 20,
+    renata: 888,
+};
+
 function getChampionName(championId) {
     return CHAMPION_NAMES[championId] ?? `Champion#${championId}`;
 }
 
 function getChampionIdByName(championName) {
-    return CHAMPION_IDS[championName] ?? null;
+    if (!championName) return null;
+    return CHAMPION_IDS[championName] ?? CHAMPION_IDS_NORMALIZED[normalizeChampionName(championName)] ?? null;
 }
 
 function getChampionIconUrl(championName, patchVersion) {

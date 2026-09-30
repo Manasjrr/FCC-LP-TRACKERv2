@@ -16,6 +16,7 @@ const SCOREBOARD_FILE = "scoreboard.png";
 async function buildDetailedStats(matchInfo, puuid, timeline = null, userTag, tr, patchVersion) {
     const participants = matchInfo.participants;
     const player = participants.find((p) => p.puuid === puuid);
+    if (!player) return null; // joueur absent de la game → "données introuvables"
     const enemies = participants.filter((p) => p.teamId !== player.teamId);
     const opponent = enemies.find((p) => p.teamPosition === player.teamPosition) || enemies[0];
 

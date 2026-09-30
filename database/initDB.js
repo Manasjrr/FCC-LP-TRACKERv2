@@ -1,6 +1,33 @@
 const { MATCH_STATS_COLUMNS } = require("../utils/matchStatsUtils");
 
+// ─── Performances SQLite ──────────────────────────────────────────────────────
+// • WAL : les écritures ne bloquent plus les lectures, et chaque écriture coûte
+//   beaucoup moins cher (pas de réécriture complète du journal)
+// • synchronous NORMAL : sûr en WAL (aucune corruption possible), bien plus rapide
+// • requêtes préparées mises en cache : le code appelle db.prepare(sql) à chaque
+//   exécution → le SQL n'est plus recompilé à chaque fois
+const MAX_CACHED_STATEMENTS = 500;
+
+function tuneDB(db) {
+    db.pragma("journal_mode = WAL");
+    db.pragma("synchronous = NORMAL");
+
+    const prepare = db.prepare.bind(db);
+    const statements = new Map();
+    db.prepare = (sql) => {
+        let statement = statements.get(sql);
+        if (!statement) {
+            // Garde-fou : SQL généré dynamiquement en très grand nombre
+            if (statements.size >= MAX_CACHED_STATEMENTS) statements.clear();
+            statement = prepare(sql);
+            statements.set(sql, statement);
+        }
+        return statement;
+    };
+}
+
 function initDB(db) {
+    tuneDB(db);
     db.pragma("foreign_keys = ON");
 
     // ── Table players (globale, un seul enregistrement par joueur/puuid) ──────

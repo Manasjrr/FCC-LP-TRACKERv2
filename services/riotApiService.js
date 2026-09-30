@@ -1,7 +1,12 @@
+const https = require("https");
 const axios = require("axios");
 const logger = require("../utils/loggers");
 
 const RIOT_API_KEY = process.env.RIOT_API_KEY;
+
+// Connexions réutilisées (keep-alive) : sans ça, chaque appel refait une
+// connexion TLS complète (coûteux en CPU et en latence)
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
 
 // ─── Helper retry + rate limit ────────────────────────────────────────────────
 async function riotGet(url, retries = 2) {
@@ -10,6 +15,7 @@ async function riotGet(url, retries = 2) {
             return await axios.get(url, {
                 headers: { "X-Riot-Token": RIOT_API_KEY },
                 timeout: 10_000,
+                httpsAgent,
             });
         } catch (err) {
             const status = err.response?.status;
@@ -44,7 +50,7 @@ async function riotGet(url, retries = 2) {
 // ─── Compte ───────────────────────────────────────────────────────────────────
 async function getAccountByRiotId(gameName, tagLine) {
     const res = await riotGet(
-        `https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${gameName}/${tagLine}`
+        `https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`
     );
     return res.data;
 }
@@ -68,6 +74,11 @@ async function getRankedDataByPuuid(puuid) {
 async function getSoloQData(puuid) {
     const data = await getRankedDataByPuuid(puuid);
     return data.find((e) => e.queueType === "RANKED_SOLO_5x5") ?? null;
+}
+
+async function getFlexData(puuid) {
+    const data = await getRankedDataByPuuid(puuid);
+    return data.find((e) => e.queueType === "RANKED_FLEX_SR") ?? null;
 }
 
 // ─── Matchs ───────────────────────────────────────────────────────────────────
@@ -155,6 +166,7 @@ module.exports = {
     getSummonerByPuuid,
     getRankedDataByPuuid,
     getSoloQData,
+    getFlexData,
     getRecentMatchIds,
     getLastMatchId,
     getMatch,

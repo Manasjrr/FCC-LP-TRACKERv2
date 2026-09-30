@@ -218,9 +218,28 @@ function scoreMatch(match, overrides = {}) {
 // ─── Récupération des games ───────────────────────────────────────────────────
 // before (timestamp ms) : ne prend que les games jouées avant cette date
 // → permet de recalculer la note telle qu'elle était dans le passé
+// participant_json (~10-20 Ko par game) n'est lu que s'il sert : CS jungle à
+// 10 min des vieilles games (voir getJungleCs10FromJson). /list, le récap et le
+// classement calculent la note de chaque joueur → beaucoup moins de données lues.
+let ratedColumnsSql = null;
+
+function getRatedColumnsSql() {
+    if (!ratedColumnsSql) {
+        const columns = global.db.prepare(`SELECT name FROM pragma_table_info('match_history')`)
+            .all()
+            .map((c) => c.name)
+            .filter((name) => name !== "participant_json");
+        ratedColumnsSql = [
+            ...columns,
+            `CASE WHEN jungle_cs_10 IS NULL AND team_position = 'JUNGLE' THEN participant_json END AS participant_json`,
+        ].join(", ");
+    }
+    return ratedColumnsSql;
+}
+
 function getRatedMatches(playerId, before = Number.MAX_SAFE_INTEGER) {
     return global.db.prepare(`
-        SELECT * FROM match_history
+        SELECT ${getRatedColumnsSql()} FROM match_history
         WHERE player_id = ? AND is_remake = 0 AND game_creation < ?
         ORDER BY game_creation DESC
         LIMIT ?

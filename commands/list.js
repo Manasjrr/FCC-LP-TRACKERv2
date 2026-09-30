@@ -34,9 +34,14 @@ module.exports = {
             .setFooter({ text: tr("list.footer", { count: rows.length }) });
 
         let description = `${tr("list.sortedByRank")}\n\n`;
+        const footerLink = `*[${tr("list.dpmLeaderboard")}](https://dpm.lol/leaderboards/2959450a-838c-4bd0-87fa-fe733f81c245)*`;
+        // Limite Discord : 4096 caractères par description (marge pour la ligne "… et N autres")
+        const MAX_DESCRIPTION = 4096 - footerLink.length - 80;
+        let shown = 0;
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
+            let entry;
             try {
                 const rankEmoji = getRankEmoji(row.last_rank);
                 const dpmLink = `[DPM](${getDpmUrl(row.riot_id)})`;
@@ -45,8 +50,8 @@ module.exports = {
                     ? ""
                     : ` • **${rating.score}/100** (${rating.tier.grade})${rating.provisional ? ` ${tr("list.provisional")}` : ""}`;
 
-                description += `**${i + 1}.** ${row.riot_id} ${dpmLink}\n`;
-                description += `└ ${rankEmoji} ${row.last_rank || "UNRANKED"} (${row.last_lp || 0} LP)${ratingText}\n\n`;
+                entry = `**${i + 1}.** ${row.riot_id} ${dpmLink}\n`;
+                entry += `└ ${rankEmoji} ${row.last_rank || "UNRANKED"} (${row.last_lp || 0} LP)${ratingText}\n\n`;
 
             } catch (error) {
                 logger.warn('COMMAND', `Erreur affichage joueur dans /list : ${row.riot_id}`, {
@@ -55,10 +60,14 @@ module.exports = {
                 });
 
                 const rankEmoji = getRankEmoji(row.last_rank);
-                description += `**${i + 1}.** ${row.riot_id}\n`;
-                description += `└ ${tr("list.userNotFound")}\n`;
-                description += `└ ${rankEmoji} ${row.last_rank || "UNRANKED"} (${row.last_lp || 0} LP)\n\n`;
+                entry = `**${i + 1}.** ${row.riot_id}\n`;
+                entry += `└ ${tr("list.userNotFound")}\n`;
+                entry += `└ ${rankEmoji} ${row.last_rank || "UNRANKED"} (${row.last_lp || 0} LP)\n\n`;
             }
+
+            if (description.length + entry.length > MAX_DESCRIPTION) break;
+            description += entry;
+            shown++;
         }
 
         logger.success('COMMAND', `/list affiché avec succès`, {
@@ -66,7 +75,8 @@ module.exports = {
             guild: interaction.guildId
         });
 
-        description += `*[${tr("list.dpmLeaderboard")}](https://dpm.lol/leaderboards/2959450a-838c-4bd0-87fa-fe733f81c245)*`;
+        if (shown < rows.length) description += `${tr("list.more", { count: rows.length - shown })}\n\n`;
+        description += footerLink;
         embed.setDescription(description);
         await interaction.editReply({ embeds: [embed] });
     },

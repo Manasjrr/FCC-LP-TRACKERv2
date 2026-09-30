@@ -2,9 +2,11 @@ const { EmbedBuilder } = require("discord.js");
 
 // Fonction pour récupérer les matchs d'un joueur
 function getPlayerMatches(playerId, limit = 20) {
-    return global.db.prepare(
-        `SELECT * FROM match_history WHERE player_id = ? ORDER BY game_creation DESC LIMIT ?`
-    ).all(playerId, limit);
+    // Uniquement les colonnes affichées (pas le JSON complet du participant)
+    return global.db.prepare(`
+        SELECT champion_name, kills, deaths, assists, win, lp_change, is_remake, game_creation
+        FROM match_history WHERE player_id = ? ORDER BY game_creation DESC LIMIT ?
+    `).all(playerId, limit);
 }
 
 

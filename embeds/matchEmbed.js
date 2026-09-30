@@ -212,26 +212,33 @@ function buildDuoMatchEmbed(entries, match, matchId, patchVersion, tr) {
 }
 
 // ─── Notification Flex (un seul embed pour tous les joueurs suivis) ──────────
-// Pas de LP / note / classement : les Flex ne sont pas enregistrées en BDD
-// entries = [{ player, result: { participant } }] (triées par rôle)
+// Pas de variation de LP / classement : les Flex ne sont pas enregistrées en BDD
+// entries = [{ player, result: { participant }, gameScore, flexRank }] (triées par rôle)
+// flexRank = { rank, lp } (rang Flex actuel) ou null si indisponible
 const FLEX_REMAKE_MAX_DURATION = 5 * 60; // secondes
 
 function formatThousands(value) {
     return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : `${value}`;
 }
 
-function buildFlexPlayerBlock({ player, result: { participant }, gameScore }, gameDuration, tr) {
+function buildFlexPlayerBlock({ player, result: { participant }, gameScore, flexRank }, gameDuration, tr) {
     const { kills, deaths, assists } = participant;
     const kdaRatio = deaths === 0 ? "Perfect" : ((kills + assists) / deaths).toFixed(1);
     const cs = (participant.totalMinionsKilled ?? 0) + (participant.neutralMinionsKilled ?? 0);
     const csPerMin = gameDuration > 0 ? (cs / (gameDuration / 60)).toFixed(1) : "0";
     const role = participant.teamPosition;
 
-    const lines = [
+    const lines = [];
+    if (flexRank) {
+        lines.push(flexRank.rank === "UNRANKED"
+            ? `${getRankEmoji(flexRank.rank)} ${tr("match.flexUnranked")}`
+            : `${getRankEmoji(flexRank.rank)} ${flexRank.rank} · ${flexRank.lp} LP`);
+    }
+    lines.push(
         `⚔️ **${kills} / ${deaths} / ${assists}** · ${kdaRatio} KDA`
             + (gameScore ? `  ·  🧮 **${gameScore.score}**/100 (${gameScore.tier.grade})` : ""),
         `🌾 ${cs} CS (${csPerMin}/min) · 💥 ${tr("match.damage", { damage: formatThousands(participant.totalDamageDealtToChampions ?? 0) })}`,
-    ];
+    );
     const multiKillText = getMultiKillText(participant, tr);
     if (multiKillText) lines.push(multiKillText);
 
@@ -314,7 +321,11 @@ function buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion, tr) {
         }
     }
 
-    // Un bouton "Stats détaillées" par joueur (5 max par ligne)
+    return { embeds, rows: buildStatsButtonRows(entries, matchId) };
+}
+
+// ─── Un bouton "Stats détaillées" par joueur (5 max par ligne) ───────────────
+function buildStatsButtonRows(entries, matchId) {
     const buttons = entries.map(({ player }) =>
         new ButtonBuilder()
             .setCustomId(`stats|${matchId}|${player.puuid}`)
@@ -325,8 +336,7 @@ function buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion, tr) {
     for (let i = 0; i < buttons.length; i += 5) {
         rows.push(new ActionRowBuilder().addComponents(buttons.slice(i, i + 5)));
     }
-
-    return { embeds, rows };
+    return rows;
 }
 
 // ─── Embed changement de rang ─────────────────────────────────────────────────
@@ -361,6 +371,7 @@ module.exports = {
     buildMatchNotifEmbed,
     buildGroupMatchNotifEmbed,
     buildFlexMatchEmbed,
+    buildStatsButtonRows,
     buildRankChangeEmbed,
     buildRiotIdChangeEmbed,
 };

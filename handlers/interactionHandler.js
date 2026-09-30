@@ -8,7 +8,7 @@ const { buildDetailedStats } = require("../embeds/detailedStatsEmbed");
 const { getMatch, getTimeline } = require("../services/riotApiService");
 const { storeTimelineStats } = require("../services/matchService");
 const { getPatchVersion } = require("../services/monitoringService");
-const { extractFullMatchStats } = require("../utils/matchStatsUtils");
+const { extractFullMatchStats, isRemakeMatch } = require("../utils/matchStatsUtils");
 const { getChampionName } = require("../utils/championUtils");
 const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
@@ -63,7 +63,19 @@ async function handleCommand(interaction) {
     } catch (error) {
         logger.error("HANDLER", `Erreur commande /${interaction.commandName}`, {
             error: error.message,
+            stack: error.stack,
         });
+        // Sans réponse, l'utilisateur resterait bloqué sur "réfléchit..."
+        const content = getTranslator(interaction.guildId)("common.error");
+        try {
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({ content, embeds: [], components: [] });
+            } else {
+                await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+            }
+        } catch (e) {
+            logger.error("HANDLER", "Erreur finale commande", { error: e.message });
+        }
     }
 }
 
@@ -110,6 +122,11 @@ async function handleButton(interaction) {
             return await handleShare(interaction, tr);
         }
 
+        // Détail de la note d'une game non enregistrée (Flex)
+        if (customId.startsWith("gamescore_p|")) {
+            return await handleParticipantGameScore(interaction, tr);
+        }
+
         // Détail de la note de la game
         if (customId.startsWith("gamescore|")) {
             return await handleGameScore(interaction, tr);
@@ -143,6 +160,9 @@ async function handleButton(interaction) {
         try {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({ content: tr("common.error"), flags: MessageFlags.Ephemeral });
+            } else if (interaction.deferred && !interaction.replied) {
+                // Remplace le "réfléchit..." resté affiché
+                await interaction.editReply({ content: tr("common.error"), embeds: [], components: [] });
             } else {
                 await interaction.followUp({ content: tr("common.error"), flags: MessageFlags.Ephemeral });
             }
@@ -254,8 +274,7 @@ async function loadMatchData(matchId) {
     let timeline = timelineCache.getTimeline(matchId);
     if (!timeline) {
         try {
-            timeline = await getTimeline(matchId);
-            timelineCache.setTimeline(matchId, timeline);
+            timeline = timelineCache.setTimeline(matchId, await getTimeline(matchId));
             // Profite de l'appel pour enregistrer les stats timeline (écarts à 15 min...)
             storeTimelineStats(matchId, timeline, matchInfo);
         } catch (error) {
@@ -309,10 +328,22 @@ async function handleDetailedStats(interaction, tr) {
         WHERE mh.match_id = ? AND p.puuid = ? AND mh.is_remake = 0
     `).get(matchId, puuid);
 
-    if (matchRow) {
+    // Match non enregistré (Flex) : note recalculée depuis le match, joueur
+    // identifié par sa position dans la game
+    // (match déjà en cache après getDetailedStats → aucun appel API)
+    let gameScoreId = matchRow ? `gamescore|${matchRow.id}` : null;
+    if (!matchRow) {
+        const matchInfo = (await loadMatchData(matchId))?.matchInfo;
+        const index = matchInfo && !isRemakeMatch(matchInfo)
+            ? matchInfo.participants.findIndex((p) => p.puuid === puuid)
+            : -1;
+        if (index >= 0) gameScoreId = `gamescore_p|${matchId}|${index}`;
+    }
+
+    if (gameScoreId) {
         row.addComponents(
             new ButtonBuilder()
-                .setCustomId(`gamescore|${matchRow.id}`)
+                .setCustomId(gameScoreId)
                 .setLabel(tr("buttons.gameScore"))
                 .setStyle(ButtonStyle.Secondary)
         );
@@ -359,6 +390,37 @@ async function handleGameScore(interaction, tr) {
     const components = data ? [buildGameScorePicker(matchId, data, match.puuid, tr)] : [];
 
     await interaction.editReply({ embeds: [buildGameScoreEmbed(details, match, match.riot_id, tr)], components });
+}
+
+// ─── Détail de la note d'un joueur d'une game non enregistrée (Flex) ────────
+async function handleParticipantGameScore(interaction, tr) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    const [, matchId, index] = interaction.customId.split("|");
+    const data = await loadMatchData(matchId);
+    const participant = data?.matchInfo.participants[Number(index)];
+    if (!participant) {
+        return interaction.editReply({ content: tr("buttons.matchDataNotFound") });
+    }
+
+    const row = getParticipantScoreRow(matchId, data, participant);
+    const details = getGameScoreDetails(row);
+    if (!details) {
+        return interaction.editReply({
+            content: tr(row.is_remake ? "buttons.noRemakeScore" : "buttons.scoreUnavailable"),
+        });
+    }
+
+    logger.info("HANDLER", `Détail de la note consulté par ${interaction.user.tag}`, {
+        matchId,
+        player: row.riot_id,
+        score: details.score,
+    });
+
+    await interaction.editReply({
+        embeds: [buildGameScoreEmbed(details, row, row.riot_id, tr)],
+        components: [buildGameScorePicker(matchId, data, participant.puuid, tr)],
+    });
 }
 
 // ─── Note d'un joueur de la game (suivi ou non) ──────────────────────────────
@@ -419,7 +481,9 @@ async function handleSelectMenu(interaction) {
     } catch (error) {
         logger.error("HANDLER", `Erreur menu (${interaction.customId})`, { error: error.message });
         try {
-            await interaction.followUp({ content: tr("common.error"), flags: MessageFlags.Ephemeral });
+            const payload = { content: tr("common.error"), flags: MessageFlags.Ephemeral };
+            if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
+            else await interaction.reply(payload);
         } catch (e) {
             logger.error("HANDLER", "Erreur finale menu", { error: e.message });
         }
