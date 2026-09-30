@@ -75,8 +75,8 @@ function buildRatingEmbed(player, rating, ranking, evolutions = []) {
             {
                 name: `🏆 Résultats — ${pts(results.points, results.max)}`,
                 value:
-                    `Winrate **${Math.round(results.winrate * 100)}%** (${results.wins}W-${results.losses}L) → ${pts(results.winratePoints, 20)}\n` +
-                    `LP moyen **${avgLpText}**/game → ${pts(results.lpPoints, 10)}`,
+                    `Winrate **${Math.round(results.winrate * 100)}%** (${results.wins}W-${results.losses}L) → ${pts(results.winratePoints, results.winrateMax)}\n` +
+                    `LP moyen **${avgLpText}**/game → ${pts(results.lpPoints, results.lpMax)}`,
                 inline: true,
             },
             {

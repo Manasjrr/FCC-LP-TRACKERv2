@@ -52,11 +52,11 @@ Each player gets a score out of **100** computed from their **30 most recent ran
 
 | Component | Points | Details |
 |---|---|---|
-| 🎮 In-game performance | 60 | Each game is scored according to the **role played in that game**, comparing the player's stats to role-specific targets |
-| 🏆 Results | 30 | Winrate from 35% to 65% (20 pts) + average LP per game from −10 to +10 (10 pts) |
-| 🔥 Form | 10 | Winrate over the last 10 games: 30% → 0 pts, 50% → 5 pts, 80% → 10 pts |
+| 🎮 In-game performance | 75 | Each game is scored according to the **role played in that game**, comparing the player's stats to role-specific targets |
+| 🏆 Results | 20 | Winrate from 35% to 65% (14 pts) + average LP per game from −10 to +10 (6 pts) |
+| 🔥 Form | 5 | Winrate over the last 10 games: 30% → 0 pts, 50% → 2.5 pts, 80% → 5 pts |
 
-**Performance weights per role (out of 60):**
+**Performance weights per role (relative weights, total 60, scaled to 75):**
 
 | Role | ⚔️ Combat | 🌾 Farm | 🥊 Lane | 👁️ Vision | 🏰 Objectives |
 |---|---|---|---|---|---|
@@ -69,7 +69,7 @@ Each player gets a score out of **100** computed from their **30 most recent ran
 - **Combat**: KDA, kill participation, damage share (+ solo kills for Top/Mid)
 - **Farm**: CS/min, CS at 10 min
 - **Lane**: gold, XP and CS difference against the direct lane opponent at 15:00 (from the match timeline)
-- **Vision**: vision score/min (+ control wards and destroyed wards for Jungle/Support)
+- **Vision**: vision score/min (+ control wards and destroyed wards for Jungle/Support — Jungle control wards count half as much as vision/min)
 - **Objectives**: turrets (Top), dragons + barons (Jungle), team void grubs / Rift Herald / first 2 dragons (Support)
 - Support performance has a −10% modifier
 - Games recorded without detailed stats are rated on KDA only
@@ -84,10 +84,11 @@ Each player gets a score out of **100** computed from their **30 most recent ran
 | Score | Grade | Tier |
 |---|---|---|
 | 85-100 | S+ | 🌟 CANNA-MESSI-CR7 |
-| 72-84 | S | 🔥 EXCELLENT |
-| 60-71 | A | ⭐ TRÈS BON |
-| 48-59 | B | ✅ SOLIDE |
-| 35-47 | C | ⚡ MOYEN |
+| 69-84 | S | 🔥 EXCELLENT |
+| 60-68 | A | ⭐ TRÈS BON |
+| 52-59 | B | ✅ SOLIDE |
+| 44-51 | C | ⚡ MOYEN |
+| 35-43 | D | ❌ MAUVAIS |
 | 0-34 | Z | ❄️ RAZMO TIER |
 
 All weights, targets and tiers are configured in [`utils/ratingUtils.js`](utils/ratingUtils.js) (`ROLE_PROFILES`, `ROLE_PERFORMANCE_MULTIPLIER`, `RATING_TIERS`, `FORM_SCALE`).

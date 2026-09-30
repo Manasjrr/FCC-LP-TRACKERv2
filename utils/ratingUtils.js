@@ -1,30 +1,33 @@
 // ─── Système de notation des joueurs (/100) ──────────────────────────────────
 // Calculée uniquement depuis match_history (aucun appel API) :
-//   • Performance en jeu : 60 pts — chaque game est notée selon le rôle joué
-//   • Résultats          : 30 pts — winrate (20) + LP moyen par game (10)
-//   • Forme              : 10 pts — winrate sur les 10 dernières games
+//   • Performance en jeu : 75 pts — chaque game est notée selon le rôle joué
+//   • Résultats          : 20 pts — winrate (14) + LP moyen par game (6)
+//   • Forme              :  5 pts — winrate sur les 10 dernières games
 
 const RATING_MATCH_COUNT = 30;   // games analysées
 const CONFIDENT_GAMES = 10;      // en dessous : note provisoire (ramenée vers 50)
 
-const PERFORMANCE_MAX = 60;
-const RESULTS_MAX = 30;
-const FORM_MAX = 10;
+const PERFORMANCE_MAX = 75;
+const RESULTS_MAX = 20;
+const WINRATE_MAX = 14;
+const LP_MAX = RESULTS_MAX - WINRATE_MAX;
+const FORM_MAX = 5;
 const FORM_GAMES = 10;
 // Winrate sur les FORM_GAMES dernières games → points de forme (interpolation entre les paliers)
 const FORM_SCALE = [
     [0.30, 0],
-    [0.50, 5],
-    [0.80, 10],
+    [0.50, FORM_MAX / 2],
+    [0.80, FORM_MAX],
 ];
 
 // ─── Paliers ──────────────────────────────────────────────────────────────────
 const RATING_TIERS = [
     { min: 85, grade: "S+", label: "🌟 CANNA-MESSI-CR7", color: 0xf0e68c },
-    { min: 72, grade: "S",  label: "🔥 EXCELLENT",       color: 0x8500ff },
+    { min: 69, grade: "S",  label: "🔥 EXCELLENT",       color: 0x8500ff },
     { min: 60, grade: "A",  label: "⭐ TRÈS BON",        color: 0x00ff00 },
-    { min: 48, grade: "B",  label: "✅ SOLIDE",          color: 0x00bfff },
-    { min: 35, grade: "C",  label: "⚡ MOYEN",           color: 0xffd700 },
+    { min: 52, grade: "B",  label: "✅ SOLIDE",          color: 0x00bfff },
+    { min: 44, grade: "C",  label: "⚡ MOYEN",           color: 0xffd700 },
+    { min: 35, grade: "D",  label: "❌ MAUVAIS",         color: 0xff8c00 },
     { min: 0,  grade: "Z",  label: "❄️ RAZMO TIER",      color: 0xff6b6b },
 ];
 
@@ -81,22 +84,23 @@ const METRICS = {
 };
 
 // ─── Profils par rôle ─────────────────────────────────────────────────────────
-// weight = points de la catégorie (total 60 par rôle)
-// metrics = { métrique: [valeur "faible" → 0%, valeur "excellente" → 100%] }
+// weight = poids relatif de la catégorie (total 60 par rôle, ramené à PERFORMANCE_MAX)
+// metrics = { métrique: [valeur "faible" → 0%, valeur "excellente" → 100%, poids (optionnel, 1 par défaut)] }
+// Dans une catégorie, chaque stat compte selon son poids (moyenne pondérée)
 // Les intervalles sont centrés sur une stat moyenne (≈ 50%) : un joueur dans la
 // moyenne de son rôle obtient environ la moitié des points de performance.
 const ROLE_PROFILES = {
     TOP: {
-        combat:     { weight: 18, metrics: { kda: [1.0, 4.0], kill_participation: [0.15, 0.30], damage_share: [0.16, 0.25], solo_kills: [0, 2] } },
-        farm:       { weight: 12, metrics: { cs_per_min: [5.0, 8.0], cs_10: [45, 75] } },
+        combat:     { weight: 18, metrics: { kda: [1.0, 4.0], kill_participation: [0.15, 0.30], damage_share: [0.10, 0.25], solo_kills: [0, 2] } },
+        farm:       { weight: 12, metrics: { cs_per_min: [5.0, 8.5], cs_10: [40, 80] } },
         lane:       { weight: 14, metrics: { gold_diff_15: [-700, 700], xp_diff_15: [-600, 600], cs_diff_15: [-10, 10] } },
-        vision:     { weight: 6,  metrics: { vision_per_min: [0.3, 0.9] } },
+        vision:     { weight: 6,  metrics: { vision_per_min: [0.3, 1.0] } },
         objectives: { weight: 10, metrics: { turret_takedowns: [0, 4] } },
     },
     JUNGLE: {
         combat:     { weight: 22, metrics: { kda: [1.2, 4.5], kill_participation: [0.35, 0.70], damage_share: [0.10, 0.24] } },
         farm:       { weight: 10, metrics: { cs_per_min: [4.0, 7.0] } },
-        vision:     { weight: 12, metrics: { vision_per_min: [0.6, 1.4], control_wards: [0, 4] } },
+        vision:     { weight: 12, metrics: { vision_per_min: [0.6, 1.4, 2], control_wards: [0, 2, 1] } },
         objectives: { weight: 16, metrics: { epic_monsters: [0, 3] } },
     },
     MIDDLE: {
@@ -109,7 +113,7 @@ const ROLE_PROFILES = {
         combat:     { weight: 22, metrics: { kda: [1.0, 4.0], kill_participation: [0.15, 0.40], damage_share: [0.20, 0.30] } },
         farm:       { weight: 18, metrics: { cs_per_min: [6.0, 9.0], cs_10: [50, 80] } },
         lane:       { weight: 14, metrics: { gold_diff_15: [-700, 700], xp_diff_15: [-600, 600], cs_diff_15: [-10, 10] } },
-        vision:     { weight: 6,  metrics: { vision_per_min: [0.3, 0.9] } },
+        vision:     { weight: 6,  metrics: { vision_per_min: [0.3, 1.0] } },
     },
     UTILITY: {
         combat:     { weight: 25, metrics: { kda: [1.5, 4.0], kill_participation: [0.35, 0.75] } },
@@ -144,6 +148,8 @@ function interpolate(x, points) {
 
 const average = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null);
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+// Poids d'une stat dans sa catégorie : 3e valeur des bornes (1 par défaut)
+const metricWeight = (bounds) => bounds[2] ?? 1;
 
 // KDA global d'un ensemble de games : (Σ kills + Σ assists) / Σ morts
 function getTotalKda(matches) {
@@ -169,17 +175,20 @@ function scoreMatch(match, overrides = {}) {
     const metrics = {};
 
     for (const [category, { weight, metrics: metricBounds }] of Object.entries(profile)) {
-        const scores = [];
+        let categoryWeighted = 0;
+        let categoryWeight = 0;
         for (const [metric, bounds] of Object.entries(metricBounds)) {
             const value = METRICS[metric].get(match);
             if (!isNum(value)) continue;
             const s = overrides[metric] ?? scale(value, bounds);
-            scores.push(s);
+            const w = metricWeight(bounds);
+            categoryWeighted += w * s;
+            categoryWeight += w;
             metrics[metric] = { value, score: s };
         }
-        if (!scores.length) continue;
+        if (!categoryWeight) continue;
 
-        const categoryScore = average(scores);
+        const categoryScore = categoryWeighted / categoryWeight;
         categories[category] = categoryScore;
         weighted += weight * categoryScore;
         totalWeight += weight;
@@ -218,7 +227,7 @@ function computePlayerRating(playerId, { before } = {}) {
         return { score: 0, games: 0, provisional: true, tier: getRatingTier(0), empty: true };
     }
 
-    // ── Performance en jeu (60) ───────────────────────────────────────────────
+    // ── Performance en jeu (75) ───────────────────────────────────────────────
     // Stats "aggregate" (ex : Héraut) : score = taux sur toutes les games du rôle
     const overridesByRole = {};
     for (const [role, profile] of Object.entries(ROLE_PROFILES)) {
@@ -275,14 +284,14 @@ function computePlayerRating(playerId, { before } = {}) {
         }
     }
 
-    // ── Résultats (30) ────────────────────────────────────────────────────────
+    // ── Résultats (20) ────────────────────────────────────────────────────────
     const wins = matches.filter((m) => m.win).length;
     const winrate = wins / games;
     const avgLp = average(matches.map((m) => m.lp_change ?? 0));
-    const winratePoints = 20 * scale(winrate, [0.35, 0.65]);
-    const lpPoints = 10 * scale(avgLp, [-10, 10]);
+    const winratePoints = WINRATE_MAX * scale(winrate, [0.35, 0.65]);
+    const lpPoints = LP_MAX * scale(avgLp, [-10, 10]);
 
-    // ── Forme (10) ────────────────────────────────────────────────────────────
+    // ── Forme (5) ────────────────────────────────────────────────────────────
     const lastGames = matches.slice(0, FORM_GAMES);
     const lastWinrate = lastGames.filter((m) => m.win).length / lastGames.length;
     let streak = 0;
@@ -309,7 +318,7 @@ function computePlayerRating(playerId, { before } = {}) {
         roleCounts,
         detailedGames: scored.filter((s) => s.role !== "DEFAULT").length,
         performance: { points: performancePoints, max: PERFORMANCE_MAX, categories: categoryBreakdown, metrics: metricBreakdown },
-        results: { points: winratePoints + lpPoints, max: RESULTS_MAX, wins, losses: games - wins, winrate, avgLp, winratePoints, lpPoints },
+        results: { points: winratePoints + lpPoints, max: RESULTS_MAX, wins, losses: games - wins, winrate, avgLp, winratePoints, lpPoints, winrateMax: WINRATE_MAX, lpMax: LP_MAX },
         form: { points: formPoints, max: FORM_MAX, lastGames: lastGames.map((m) => Boolean(m.win)), winrate: lastWinrate, streak, streakType },
     };
 }
@@ -327,7 +336,7 @@ function computeGameScore(match) {
 
 // ─── Détail de la note d'une game (barème + points gagnés / perdus) ──────────
 // Chaque catégorie disponible vaut (poids / total des poids disponibles) × 100 pts,
-// répartis à parts égales entre ses stats disponibles. Le malus de rôle s'applique au total.
+// répartis entre ses stats disponibles selon leur poids. Le malus de rôle s'applique au total.
 function getGameScoreDetails(match) {
     if (!match || match.is_remake) return null;
 
@@ -350,6 +359,7 @@ function getGameScoreDetails(match) {
             return {
                 metric,
                 label,
+                weight: metricWeight(bounds),
                 min: fmt(bounds[0]),
                 target: fmt(bounds[1]),
                 display: m ? fmt(m.value) : null,
@@ -358,8 +368,9 @@ function getGameScoreDetails(match) {
         });
 
         const counted = metricDetails.filter((m) => m.score != null);
+        const countedWeight = counted.reduce((sum, m) => sum + m.weight, 0);
         for (const m of counted) {
-            m.max = max / counted.length;
+            m.max = (max * m.weight) / countedWeight;
             m.points = m.max * m.score;
         }
 
