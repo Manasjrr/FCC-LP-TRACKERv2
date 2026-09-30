@@ -1,134 +1,170 @@
 const { EmbedBuilder } = require("discord.js");
+const { extractFullMatchStats, extractLaneDiffs15, isRemakeMatch } = require("../utils/matchStatsUtils");
+const { computeGameScore, getRoleLabel } = require("../utils/ratingUtils");
+const { getChampionName } = require("../utils/championUtils");
+const { buildScoreboardImage } = require("../utils/scoreboardUtils");
+const logger = require("../utils/loggers");
 
+const SCOREBOARD_FILE = "scoreboard.png";
+
+// ─── Stats détaillées d'une game ─────────────────────────────────────────────
+// Texte : comparaison face à l'adversaire direct · Image : tableau des 10 joueurs
+// (icône, KDA, CS, dégâts, note de la game). Tout vient du match / de la timeline
+// déjà récupérés : aucun appel API Riot supplémentaire.
 // tr = traducteur i18n (langue du serveur)
-function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag, tr) {
+// → { embed, file: { name, buffer } | null }
+async function buildDetailedStats(matchInfo, puuid, timeline = null, userTag, tr, patchVersion) {
     const participants = matchInfo.participants;
     const player = participants.find((p) => p.puuid === puuid);
-    const allyTeamId = player.teamId;
-    const allies = participants.filter((p) => p.teamId === allyTeamId);
-    const enemies = participants.filter((p) => p.teamId !== allyTeamId);
+    const enemies = participants.filter((p) => p.teamId !== player.teamId);
     const opponent = enemies.find((p) => p.teamPosition === player.teamPosition) || enemies[0];
-    const role = player.teamPosition;
 
-    const fmt = (n) => n?.toLocaleString(tr.locale) ?? "N/A";
-    const diff = (a, b) => {
-        const d = a - b;
-        return d > 0 ? `+${fmt(d)}` : `${fmt(d)}`;
-    };
-    const arrow = (a, b) => (a > b ? "🟢" : a < b ? "🔴" : "⚪");
+    const label = (key, vars) => tr(`detailedStats.${key}`, vars);
+    const gameMinutes = matchInfo.gameDuration / 60;
+    const isRemake = isRemakeMatch(matchInfo);
+    const resultLabel = (p) => label(isRemake ? "remake" : p.win ? "victory" : "defeat");
 
-    const roleEmoji = {
-        TOP: "🗡️", JUNGLE: "🌿", MIDDLE: "🔮",
-        BOTTOM: "🏹", UTILITY: "🛡️",
-    };
+    // ── Note de chaque joueur (même calcul que "Détail de la note") ──────────
+    const scores = new Map(participants.map((p) => [
+        p.puuid,
+        isRemake ? null : computeGameScore(extractFullMatchStats(matchInfo, p, timeline)),
+    ]));
 
-    const playerLine = (p) => {
-        const kda = p.deaths === 0
-            ? "Perfect"
-            : ((p.kills + p.assists) / p.deaths).toFixed(2);
-        const r = roleEmoji[p.teamPosition] || "❓";
-        const cs = p.totalMinionsKilled + p.neutralMinionsKilled;
-        const highlight = p.puuid === puuid ? "▶ " : "   ";
-        return `${highlight}${r} **${p.championName}** ${p.kills}/${p.deaths}/${p.assists} | ${fmt(cs)} CS | ${fmt(p.totalDamageDealtToChampions)} ${tr("detailedStats.damageShort")}`;
-    };
-
-    const alliesText = allies.map(playerLine).join("\n");
-    const enemiesText = enemies.map(playerLine).join("\n");
-
-    const playerCs = player.totalMinionsKilled + player.neutralMinionsKilled;
-    const opponentCs = opponent.totalMinionsKilled + opponent.neutralMinionsKilled;
-
-    // ── Timeline @15 ──────────────────────────────────────────────────────────
-    let goldDiff15 = null, csDiff15 = null;
-    let playerAssists15 = null, opponentAssists15 = null;
-
-    if (timeline) {
-        const frame15 = timeline.info.frames[15];
-        if (frame15) {
-            const playerParticipantId = participants.indexOf(player) + 1;
-            const opponentParticipantId = participants.indexOf(opponent) + 1;
-            const playerFrame = frame15.participantFrames[playerParticipantId];
-            const opponentFrame = frame15.participantFrames[opponentParticipantId];
-
-            goldDiff15 = (playerFrame?.totalGold ?? 0) - (opponentFrame?.totalGold ?? 0);
-
-            const playerCs15 = (playerFrame?.minionsKilled ?? 0) + (playerFrame?.jungleMinionsKilled ?? 0);
-            const opponentCs15 = (opponentFrame?.minionsKilled ?? 0) + (opponentFrame?.jungleMinionsKilled ?? 0);
-            csDiff15 = playerCs15 - opponentCs15;
-
-            if (role === "UTILITY") {
-                let pAssists = 0, oAssists = 0;
-                for (let i = 0; i <= 15; i++) {
-                    const frame = timeline.info.frames[i];
-                    if (!frame) continue;
-                    for (const event of frame.events) {
-                        if (event.type === "CHAMPION_KILL") {
-                            if (event.assistingParticipantIds?.includes(playerParticipantId)) pAssists++;
-                            if (event.assistingParticipantIds?.includes(opponentParticipantId)) oAssists++;
-                        }
-                    }
-                }
-                playerAssists15 = pAssists;
-                opponentAssists15 = oAssists;
-            }
-        }
-    }
-
-    // ── Stats selon le rôle ───────────────────────────────────────────────────
-    const stats = [];
-
-    const label = (key) => tr(`detailedStats.${key}`);
-    const signedDiff = (d) => `${d > 0 ? "+" : ""}${fmt(d)}`;
-
-    stats.push(`${label("gold")} : ${arrow(player.goldEarned, opponent.goldEarned)} **${diff(player.goldEarned, opponent.goldEarned)}**`);
-    stats.push(
-        goldDiff15 !== null
-            ? `${label("goldDiff15")} : ${arrow(goldDiff15, 0)} **${signedDiff(goldDiff15)}**`
-            : `${label("goldDiff15")} : ⚪ **N/A**`
-    );
-    stats.push(`${label("damage")} : ${arrow(player.totalDamageDealtToChampions, opponent.totalDamageDealtToChampions)} **${diff(player.totalDamageDealtToChampions, opponent.totalDamageDealtToChampions)}**`);
-    stats.push(`${label("vision")} : ${arrow(player.visionScore, opponent.visionScore)} **${diff(player.visionScore, opponent.visionScore)}** (${player.visionScore} vs ${opponent.visionScore})`);
-
-    if (role === "JUNGLE") {
-        stats.push(
-            csDiff15 !== null
-                ? `${label("csDiff15Jungle")} : ${arrow(csDiff15, 0)} **${signedDiff(csDiff15)}**`
-                : `${label("csDiff15Jungle")} : ⚪ **N/A**`
-        );
-        stats.push(`${label("csTotal")} : ${arrow(playerCs, opponentCs)} **${diff(playerCs, opponentCs)}**`);
-    } else if (role === "UTILITY") {
-        stats.push(
-            playerAssists15 !== null
-                ? `${label("assists15")} : ${arrow(playerAssists15, opponentAssists15)} **${playerAssists15}** vs **${opponentAssists15}**`
-                : `${label("assists15")} : ⚪ **N/A**`
-        );
-    } else {
-        stats.push(`${label("csTotal")} : ${arrow(playerCs, opponentCs)} **${diff(playerCs, opponentCs)}**`);
-        stats.push(
-            csDiff15 !== null
-                ? `${label("csDiff15")} : ${arrow(csDiff15, 0)} **${signedDiff(csDiff15)}**`
-                : `${label("csDiff15")} : ⚪ **N/A**`
-        );
-        if (role === "TOP" || role === "MIDDLE") {
-            const pSolo = player.challenges?.soloKills ?? 0;
-            const oSolo = opponent.challenges?.soloKills ?? 0;
-            stats.push(`${label("soloKills")} : ${arrow(pSolo, oSolo)} **${pSolo}** vs **${oSolo}**`);
-        }
-    }
-
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setTitle(label("title"))
-        .setColor(player.win ? 0x00ff00 : 0xff0000)
-        .addFields(
-            { name: label("allies"), value: alliesText || "N/A", inline: false },
-            { name: label("enemies"), value: enemiesText || "N/A", inline: false },
-            { name: tr("detailedStats.versus", { champion: opponent.championName }), value: stats.join("\n"), inline: false }
-        )
-        .setFooter({
-            text: tr("detailedStats.footer", { minutes: Math.floor(matchInfo.gameDuration / 60) }) +
-                (userTag ? tr("detailedStats.requestedBy", { user: userTag }) : ""),
-        })
-        .setTimestamp();
+        .setColor(isRemake ? 0x95a5a6 : player.win ? 0x2ecc71 : 0xe74c3c)
+        .setDescription(buildSummary(player, opponent, scores.get(puuid), resultLabel(player), gameMinutes, tr))
+        .addFields(buildComparisonFields(matchInfo, player, opponent, timeline, tr))
+        .setTimestamp(matchInfo.gameEndTimestamp ?? null);
+    if (userTag) embed.setFooter({ text: label("requestedBy", { user: userTag }) });
+
+    // ── Tableau des scores (image) ────────────────────────────────────────────
+    let file = null;
+    try {
+        const buffer = await buildScoreboardImage(buildTeams(participants, player, scores, isRemake, resultLabel, tr), {
+            patchVersion,
+            gameMinutes,
+            columns: {
+                kda: "KDA",
+                cs: "CS",
+                damage: label("columnDamage"),
+                score: label("score"),
+            },
+            fmt: {
+                number: (n) => n.toLocaleString(tr.locale),
+                perMin: (n) => label("perMin", { value: n.toLocaleString(tr.locale, { maximumFractionDigits: 1 }) }),
+            },
+        });
+        file = { name: SCOREBOARD_FILE, buffer };
+        embed.setImage(`attachment://${SCOREBOARD_FILE}`);
+    } catch (error) {
+        logger.warn("EMBED", "Tableau des scores impossible, embed sans image", { error: error.message });
+    }
+
+    return { embed, file };
 }
 
-module.exports = { buildDetailedStatsEmbed };
+// ─── Résumé : résultat, champion, rôle, durée, note ──────────────────────────
+function buildSummary(player, opponent, score, result, gameMinutes, tr) {
+    const label = (key, vars) => tr(`detailedStats.${key}`, vars);
+    const parts = [
+        `**${result}**`,
+        getChampionName(player.championId),
+        player.teamPosition ? getRoleLabel(player.teamPosition, tr) : null,
+        label("duration", { minutes: Math.floor(gameMinutes) }),
+    ].filter(Boolean);
+
+    return [
+        parts.join(" · "),
+        score ? label("yourScore", { score: score.score, grade: score.tier.grade }) : null,
+        `### ${label("versus", { champion: getChampionName(opponent.championId) })}`,
+    ].filter((line) => line != null).join("\n");
+}
+
+// ─── Comparaison face à l'adversaire direct (champs en grille) ───────────────
+function buildComparisonFields(matchInfo, player, opponent, timeline, tr) {
+    const label = (key) => tr(`detailedStats.${key}`);
+    const fmt = (n) => n.toLocaleString(tr.locale);
+    const signed = (d) => `${d > 0 ? "+" : ""}${fmt(d)}`;
+    const trend = (d) => (d > 0 ? "🟢" : d < 0 ? "🔴" : "⚪");
+    const na = { value: "—" };
+
+    // Écart sur une stat de fin de game : "🟢 +1 240" + valeurs des deux joueurs
+    const compare = (a, b) => ({ value: `**${trend(a - b)} ${signed(a - b)}**\n${fmt(a)} vs ${fmt(b)}` });
+    // Écart à 15 min (timeline) : écart seul
+    const diffOnly = (d) => (d == null ? na : { value: `**${trend(d)} ${signed(d)}**` });
+
+    const cs = (p) => (p.totalMinionsKilled ?? 0) + (p.neutralMinionsKilled ?? 0);
+    const lane = timeline ? extractLaneDiffs15(timeline, matchInfo, player.puuid) : null;
+    const role = player.teamPosition;
+
+    const stats = [
+        ["gold", compare(player.goldEarned, opponent.goldEarned)],
+        ["damage", compare(player.totalDamageDealtToChampions, opponent.totalDamageDealtToChampions)],
+        ["vision", compare(player.visionScore, opponent.visionScore)],
+        ["goldDiff15", diffOnly(lane?.gold_diff_15)],
+    ];
+
+    if (role === "UTILITY") {
+        const assists = timeline ? countAssists15(timeline, matchInfo, player, opponent) : null;
+        stats.push(["assists15", assists ? compare(assists.player, assists.opponent) : na]);
+        stats.push(["xpDiff15", diffOnly(lane?.xp_diff_15)]);
+    } else {
+        stats.push(["csTotal", compare(cs(player), cs(opponent))]);
+        stats.push(["csDiff15", diffOnly(lane?.cs_diff_15)]);
+    }
+
+    if (role === "TOP" || role === "MIDDLE") {
+        stats.push(["soloKills", compare(player.challenges?.soloKills ?? 0, opponent.challenges?.soloKills ?? 0)]);
+    }
+
+    // Grille de 3 colonnes : complète la dernière ligne pour garder l'alignement
+    const fields = stats.map(([key, { value }]) => ({ name: label(key), value, inline: true }));
+    while (fields.length % 3) fields.push({ name: "​", value: "​", inline: true });
+    return fields;
+}
+
+// Assists des 15 premières minutes (support)
+function countAssists15(timeline, matchInfo, player, opponent) {
+    const participantId = (p) => p.participantId ?? matchInfo.participants.indexOf(p) + 1;
+    const playerId = participantId(player);
+    const opponentId = participantId(opponent);
+    const result = { player: 0, opponent: 0 };
+
+    for (const frame of timeline.info.frames.slice(0, 16)) {
+        for (const event of frame.events ?? []) {
+            if (event.type !== "CHAMPION_KILL") continue;
+            if (event.assistingParticipantIds?.includes(playerId)) result.player++;
+            if (event.assistingParticipantIds?.includes(opponentId)) result.opponent++;
+        }
+    }
+    return result;
+}
+
+// ─── Équipes pour le tableau des scores (équipe du joueur en premier) ───────
+function buildTeams(participants, player, scores, isRemake, resultLabel, tr) {
+    const teamIds = [player.teamId, ...new Set(participants.map((p) => p.teamId).filter((id) => id !== player.teamId))];
+
+    return teamIds.map((teamId) => {
+        const members = participants.filter((p) => p.teamId === teamId);
+        const rows = members.map((p) => ({
+            participant: p,
+            score: scores.get(p.puuid),
+            highlight: p.puuid === player.puuid,
+            badge: null,
+        }));
+
+        // MVP : meilleure note de l'équipe gagnante · ACE : meilleure note de l'équipe perdante
+        const best = rows.filter((r) => r.score).sort((a, b) => b.score.score - a.score.score)[0];
+        if (best && !isRemake) best.badge = members[0].win ? "MVP" : "ACE";
+
+        return {
+            teamId,
+            label: tr(`detailedStats.${teamId === player.teamId ? "allies" : "enemies"}`),
+            result: resultLabel(members[0]),
+            players: rows,
+        };
+    });
+}
+
+module.exports = { buildDetailedStats };

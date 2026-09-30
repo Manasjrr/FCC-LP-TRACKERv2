@@ -120,7 +120,7 @@ function buildGameScoreEmbed(details, match, riotId, tr) {
 
     // Valeur / barème affichés (le Héraut est un oui / non sur une game)
     const describe = (m) => {
-        if (m.metric === "team_heralds") {
+        if (m.metric === "team_heralds" || m.metric === "early_objective") {
             return `**${tr(m.score >= 1 ? "rating.heraldTaken" : "rating.heraldNotTaken")}** · ${tr("rating.heraldScale")}`;
         }
         return `**${m.display}** · ${tr("rating.scale", { min: m.min, target: m.target })}`;

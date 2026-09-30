@@ -1,12 +1,15 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require("discord.js");
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, MessageFlags } = require("discord.js");
 const { generateLPGraph } = require("../utils/graphUtils");
 const { getPlayerMatches, createHistoryEmbedWithColors } = require("../utils/historyUtils");
 const { getPlayerById, getGuildPlayers } = require("../utils/playerUtils");
 const { computePlayerRating, getGuildRatingRanking, getRatingEvolution, getGameScoreDetails } = require("../utils/ratingUtils");
 const { buildRatingEmbed, buildGameScoreEmbed } = require("../embeds/ratingEmbed");
-const { buildDetailedStatsEmbed } = require("../embeds/detailedStatsEmbed");
+const { buildDetailedStats } = require("../embeds/detailedStatsEmbed");
 const { getMatch, getTimeline } = require("../services/riotApiService");
 const { storeTimelineStats } = require("../services/matchService");
+const { getPatchVersion } = require("../services/monitoringService");
+const { extractFullMatchStats } = require("../utils/matchStatsUtils");
+const { getChampionName } = require("../utils/championUtils");
 const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
 const { getTranslator } = require("../utils/i18n");
@@ -28,12 +31,17 @@ async function handleInteraction(interaction) {
     if (interaction.isModalSubmit()) {
         return handleModal(interaction);
     }
+    if (interaction.isStringSelectMenu()) {
+        return handleSelectMenu(interaction);
+    }
 }
 
-async function sendFileViaAxios(interaction, embed, imageBuffer, filename) {
+// components : lignes de boutons à joindre (ActionRowBuilder), facultatif
+async function sendFileViaAxios(interaction, embed, imageBuffer, filename, components = []) {
     const form = new FormData();
     form.append('payload_json', JSON.stringify({
         embeds: [embed.toJSON()],
+        components: components.map((row) => row.toJSON()),
     }));
     form.append('files[0]', imageBuffer, filename);
 
@@ -227,8 +235,9 @@ async function handleMatchHistoryButton(interaction, tr) {
     await interaction.showModal(modal);
 }
 
-// ─── Match + timeline (cache en priorité) → embed stats détaillées ───────────
-async function getDetailedStatsEmbed(matchId, puuid, userTag, tr) {
+// ─── Match + timeline (cache en priorité) ─────────────────────────────────────
+// → { matchInfo, timeline } (timeline null si indisponible) ou null (match introuvable)
+async function loadMatchData(matchId) {
     let matchInfo = matchCache.getMatch(matchId);
 
     if (!matchInfo) {
@@ -254,7 +263,15 @@ async function getDetailedStatsEmbed(matchId, puuid, userTag, tr) {
         }
     }
 
-    return buildDetailedStatsEmbed(matchInfo, puuid, timeline, userTag, tr);
+    return { matchInfo, timeline: timeline ?? null };
+}
+
+// ─── Match + timeline → stats détaillées ─────────────────────────────────────
+// → { embed, file } ou null (match introuvable)
+async function getDetailedStats(matchId, puuid, userTag, tr) {
+    const data = await loadMatchData(matchId);
+    if (!data) return null;
+    return buildDetailedStats(data.matchInfo, puuid, data.timeline, userTag, tr, getPatchVersion());
 }
 
 // ─── Stats détaillées ─────────────────────────────────────────────────────────
@@ -272,8 +289,8 @@ async function handleDetailedStats(interaction, tr) {
         channel: interaction.channelId,
     });
 
-    const embed = await getDetailedStatsEmbed(matchId, puuid, interaction.user.tag, tr);
-    if (!embed) {
+    const stats = await getDetailedStats(matchId, puuid, interaction.user.tag, tr);
+    if (!stats) {
         return interaction.editReply({ content: tr("buttons.matchDataNotFound") });
     }
 
@@ -301,7 +318,13 @@ async function handleDetailedStats(interaction, tr) {
         );
     }
 
-    await interaction.editReply({ embeds: [embed], components: [row] });
+    await sendDetailedStats(interaction, stats, [row]);
+}
+
+// Embed + tableau des scores (image envoyée via axios, voir sendFileViaAxios)
+async function sendDetailedStats(interaction, { embed, file }, components = []) {
+    if (file) return sendFileViaAxios(interaction, embed, file.buffer, file.name, components);
+    return interaction.editReply({ embeds: [embed], components });
 }
 
 // ─── Détail de la note d'une game ─────────────────────────────────────────────
@@ -311,7 +334,7 @@ async function handleGameScore(interaction, tr) {
     const matchRowId = Number(interaction.customId.split("|")[1]);
 
     const match = global.db.prepare(`
-        SELECT mh.*, p.riot_id FROM match_history mh
+        SELECT mh.*, p.riot_id, p.puuid FROM match_history mh
         JOIN players p ON p.id = mh.player_id
         WHERE mh.id = ?
     `).get(matchRowId);
@@ -330,7 +353,109 @@ async function handleGameScore(interaction, tr) {
         score: details.score,
     });
 
-    await interaction.editReply({ embeds: [buildGameScoreEmbed(details, match, match.riot_id, tr)] });
+    // Menu pour voir la note des autres joueurs de la game (match déjà en cache
+    // après "Stats détaillées" → pas d'appel API dans la grande majorité des cas)
+    const data = await loadMatchData(matchId);
+    const components = data ? [buildGameScorePicker(matchId, data, match.puuid, tr)] : [];
+
+    await interaction.editReply({ embeds: [buildGameScoreEmbed(details, match, match.riot_id, tr)], components });
+}
+
+// ─── Note d'un joueur de la game (suivi ou non) ──────────────────────────────
+// Joueur suivi : ligne match_history (même note que partout ailleurs)
+// Autre joueur : ligne reconstruite depuis le match + la timeline
+function getParticipantScoreRow(matchId, { matchInfo, timeline }, participant) {
+    const stored = global.db.prepare(`
+        SELECT mh.*, p.riot_id FROM match_history mh
+        JOIN players p ON p.id = mh.player_id
+        WHERE mh.match_id = ? AND p.puuid = ?
+    `).get(matchId, participant.puuid);
+    if (stored) return stored;
+
+    return {
+        ...extractFullMatchStats(matchInfo, participant, timeline),
+        champion_name: getChampionName(participant.championId),
+        riot_id: participant.riotIdGameName
+            ? `${participant.riotIdGameName}#${participant.riotIdTagline}`
+            : getChampionName(participant.championId),
+    };
+}
+
+// Menu déroulant : les 10 joueurs de la game (équipe, champion, pseudo, note)
+const TEAM_EMOJIS = { 100: "🔵", 200: "🔴" };
+
+function buildGameScorePicker(matchId, data, selectedPuuid, tr) {
+    const options = data.matchInfo.participants.map((p, index) => {
+        const details = getGameScoreDetails(getParticipantScoreRow(matchId, data, p));
+        const name = p.riotIdGameName || getChampionName(p.championId);
+        const description = [
+            p.teamPosition ? tr(`roles.${p.teamPosition}`) : null,
+            details ? tr("buttons.pickerScore", { score: details.score, grade: details.tier.grade }) : null,
+        ].filter(Boolean).join(" · ");
+        return {
+            label: `${getChampionName(p.championId)} — ${name}`.slice(0, 100),
+            ...(description && { description }),
+            value: String(index),
+            emoji: { name: TEAM_EMOJIS[p.teamId] ?? "⚪" },
+            default: p.puuid === selectedPuuid,
+        };
+    });
+
+    return new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId(`gamescore_pick|${matchId}`)
+            .setPlaceholder(tr("buttons.pickerPlaceholder"))
+            .addOptions(options)
+    );
+}
+
+// ─── Menus déroulants ─────────────────────────────────────────────────────────
+async function handleSelectMenu(interaction) {
+    const tr = getTranslator(interaction.guildId);
+    try {
+        if (interaction.customId.startsWith("gamescore_pick|")) {
+            return await handleGameScorePick(interaction, tr);
+        }
+    } catch (error) {
+        logger.error("HANDLER", `Erreur menu (${interaction.customId})`, { error: error.message });
+        try {
+            await interaction.followUp({ content: tr("common.error"), flags: MessageFlags.Ephemeral });
+        } catch (e) {
+            logger.error("HANDLER", "Erreur finale menu", { error: e.message });
+        }
+    }
+}
+
+// Joueur choisi dans le menu → même message, avec la note de ce joueur
+async function handleGameScorePick(interaction, tr) {
+    await interaction.deferUpdate();
+
+    const matchId = interaction.customId.split("|")[1];
+    const data = await loadMatchData(matchId);
+    const participant = data?.matchInfo.participants[Number(interaction.values[0])];
+    if (!participant) {
+        return interaction.followUp({ content: tr("buttons.matchDataNotFound"), flags: MessageFlags.Ephemeral });
+    }
+
+    const row = getParticipantScoreRow(matchId, data, participant);
+    const details = getGameScoreDetails(row);
+    if (!details) {
+        return interaction.followUp({
+            content: tr(row.is_remake ? "buttons.noRemakeScore" : "buttons.scoreUnavailable"),
+            flags: MessageFlags.Ephemeral,
+        });
+    }
+
+    logger.info("HANDLER", `Détail de la note consulté par ${interaction.user.tag}`, {
+        matchId,
+        player: row.riot_id,
+        score: details.score,
+    });
+
+    await interaction.editReply({
+        embeds: [buildGameScoreEmbed(details, row, row.riot_id, tr)],
+        components: [buildGameScorePicker(matchId, data, participant.puuid, tr)],
+    });
 }
 
 // ─── Partager ─────────────────────────────────────────────────────────────────
@@ -341,11 +466,11 @@ async function handleShare(interaction, tr) {
     const matchId = parts[1];
     const puuid = parts[2];
 
-    const embed = await getDetailedStatsEmbed(matchId, puuid, interaction.user.tag, tr);
-    if (!embed) {
+    const stats = await getDetailedStats(matchId, puuid, interaction.user.tag, tr);
+    if (!stats) {
         return interaction.editReply({ content: tr("buttons.matchDataNotFound") });
     }
-    await interaction.editReply({ embeds: [embed] });
+    await sendDetailedStats(interaction, stats);
 }
 
 // ─── Modal historique ─────────────────────────────────────────────────────────

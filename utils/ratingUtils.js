@@ -56,6 +56,7 @@ const METRICS = {
     solo_kills:         { fmt: dec(1), get: (m) => m.solo_kills },
     cs_per_min:         { fmt: dec(1), get: (m) => m.cs_per_min },
     cs_10:              { fmt: dec(0), get: (m) => m.cs_10 },
+    jungle_cs_10:       { fmt: dec(0), get: (m) => m.jungle_cs_10 ?? getJungleCs10FromJson(m) },
     vision_per_min:     { fmt: dec(2), get: (m) => m.vision_per_min },
     control_wards:      { fmt: dec(1), get: (m) => m.control_wards },
     wards_killed:       { fmt: dec(1), get: (m) => m.wards_killed },
@@ -64,6 +65,13 @@ const METRICS = {
     team_grubs:         { fmt: dec(1), get: (m) => m.team_grubs, aggregate: true },
     team_heralds:       { fmt: pct,    get: (m) => m.team_heralds, aggregate: true },
     early_dragons:      { fmt: dec(1), get: (m) => m.early_dragons },
+    // Objectif early : Héraut OU au moins 3 void grubs pour l'équipe (1 = oui, 0 = non)
+    early_objective:    {
+        fmt: pct,
+        get: (m) => (m.team_heralds == null && m.team_grubs == null
+            ? null
+            : ((m.team_heralds ?? 0) > 0 || (m.team_grubs ?? 0) >= 3 ? 1 : 0)),
+    },
     gold_diff_15:       { fmt: signed, get: (m) => m.gold_diff_15 },
     xp_diff_15:         { fmt: signed, get: (m) => m.xp_diff_15 },
     cs_diff_15:         { fmt: signed, get: (m) => m.cs_diff_15 },
@@ -88,10 +96,11 @@ const ROLE_PROFILES = {
         objectives: { weight: 10, metrics: { turret_takedowns: [0, 4] } },
     },
     JUNGLE: {
-        combat:     { weight: 22, metrics: { kda: [1.2, 4.5], kill_participation: [0.35, 0.70], damage_share: [0.10, 0.24] } },
-        farm:       { weight: 10, metrics: { cs_per_min: [4.0, 7.0] } },
-        vision:     { weight: 12, metrics: { vision_per_min: [0.6, 1.4, 2], control_wards: [0, 2, 1] } },
-        objectives: { weight: 16, metrics: { epic_monsters: [0, 3] } },
+        combat:     { weight: 19, metrics: { kda: [1.2, 4.5], kill_participation: [0.35, 0.70], damage_share: [0.10, 0.24] } },
+        farm:       { weight: 13, metrics: { cs_per_min: [4.0, 7.0], jungle_cs_10: [45, 75] } },
+        lane:       { weight: 9,  metrics: { gold_diff_15: [-700, 700], xp_diff_15: [-600, 600], cs_diff_15: [-10, 10] } },
+        vision:     { weight: 7,  metrics: { vision_per_min: [0.6, 1.25, 2], control_wards: [0, 2, 1] } },
+        objectives: { weight: 12, metrics: { epic_monsters: [0, 3, 3], early_objective: [0, 1, 2] } },
     },
     MIDDLE: {
         combat:     { weight: 24, metrics: { kda: [1.0, 4.0], kill_participation: [0.32, 0.60], damage_share: [0.15, 0.33], solo_kills: [0, 2] } },
@@ -140,6 +149,17 @@ const average = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.leng
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 // Poids d'une stat dans sa catégorie : 3e valeur des bornes (1 par défaut)
 const metricWeight = (bounds) => bounds[2] ?? 1;
+
+// CS jungle à 10 min pour les games enregistrées avant la colonne jungle_cs_10
+function getJungleCs10FromJson(match) {
+    if (match.team_position !== "JUNGLE" || !match.participant_json) return null;
+    try {
+        const value = JSON.parse(match.participant_json).challenges?.jungleCsBefore10Minutes;
+        return isNum(value) ? Math.round(value) : null;
+    } catch {
+        return null;
+    }
+}
 
 // KDA global d'un ensemble de games : (Σ kills + Σ assists) / Σ morts
 function getTotalKda(matches) {

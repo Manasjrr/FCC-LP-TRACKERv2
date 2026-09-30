@@ -260,4 +260,4 @@ async function buildGroupGif(champions, patchVersion) {
     return Buffer.from(gif.bytes());
 }
 
-module.exports = { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, buildGroupGif, TEAM_COLORS };
+module.exports = { getChampionIcon, roundedRectPath, getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, buildGroupGif, TEAM_COLORS };

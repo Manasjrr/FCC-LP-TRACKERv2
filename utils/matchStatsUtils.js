@@ -20,6 +20,7 @@ const MATCH_STATS_COLUMNS = {
     cs:                    "INTEGER",
     cs_per_min:            "REAL",
     cs_10:                 "INTEGER",  // CS de lane à 10 min
+    jungle_cs_10:          "INTEGER",  // CS jungle à 10 min
     gold_earned:           "INTEGER",
     gold_per_min:          "REAL",
 
@@ -110,6 +111,7 @@ function extractMatchStats(info, participant) {
         cs,
         cs_per_min:            perMin(cs),
         cs_10:                 c.laneMinionsFirst10Minutes ?? null,
+        jungle_cs_10:          isNum(c.jungleCsBefore10Minutes) ? Math.round(c.jungleCsBefore10Minutes) : null,
         gold_earned:           p.goldEarned ?? null,
         gold_per_min:          round(c.goldPerMinute) ?? perMin(p.goldEarned),
 
@@ -211,4 +213,36 @@ function extractLaneDiffs15(timeline, info, puuid) {
     };
 }
 
-module.exports = { MATCH_STATS_COLUMNS, extractMatchStats, extractEarlyDragons, extractLaneDiffs15 };
+// ─── Remake (game écourtée) ───────────────────────────────────────────────────
+const REMAKE_MAX_DURATION = 300; // secondes
+
+function isRemakeMatch(info) {
+    return info.participants.some((p) => p.gameEndedInEarlySurrender) || info.gameDuration < REMAKE_MAX_DURATION;
+}
+
+// ─── Stats complètes d'un participant (match + timeline) ─────────────────────
+// Même contenu qu'une ligne match_history → permet de noter n'importe quel joueur
+// de la game (computeGameScore), suivi ou non. timeline facultative.
+function extractFullMatchStats(info, participant, timeline = null) {
+    const stats = {
+        // Colonnes de base de match_history (hors MATCH_STATS_COLUMNS), utilisées par la note
+        champion_id:    participant.championId ?? null,
+        champion_name:  participant.championName ?? null,
+        kills:          participant.kills ?? 0,
+        deaths:         participant.deaths ?? 0,
+        assists:        participant.assists ?? 0,
+        win:            participant.win ? 1 : 0,
+        match_duration: info.gameDuration ?? null,
+        is_remake:      isRemakeMatch(info) ? 1 : 0,
+        ...extractMatchStats(info, participant),
+    };
+    if (!timeline) return stats;
+
+    return {
+        ...stats,
+        early_dragons: extractEarlyDragons(timeline)[participant.teamId] ?? null,
+        ...extractLaneDiffs15(timeline, info, participant.puuid),
+    };
+}
+
+module.exports = { MATCH_STATS_COLUMNS, extractMatchStats, extractEarlyDragons, extractLaneDiffs15, extractFullMatchStats, isRemakeMatch };
