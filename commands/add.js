@@ -1,21 +1,23 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const { getAccountByRiotId, getRecentMatchIds, getRankedDataByPuuid } = require("../services/riotApiService");
+const { DEFAULT_LANGUAGE, t, getTranslator } = require("../utils/i18n");
 const logger = require("../utils/loggers");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("add")
-        .setDescription("Ajouter un compte LOL au monitoring")
+        .setDescription(t(DEFAULT_LANGUAGE, "commands.add.description"))
         .addStringOption((option) =>
             option
                 .setName("riot-id")
-                .setDescription("Riot ID (Nom#TAG)")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.add.options.riot-id.description"))
                 .setRequired(true),
         ),
 
     async execute(interaction) {
         await interaction.deferReply();
 
+        const tr = getTranslator(interaction.guildId);
         const riotId = interaction.options.getString("riot-id");
 
         logger.info('COMMAND', `Commande /add exécutée par ${interaction.user.tag}`, {
@@ -25,14 +27,14 @@ module.exports = {
 
         if (!global.db) {
             logger.error('DB', `Base de données non disponible lors du /add`, { user: interaction.user.tag });
-            return interaction.editReply("Base de données non disponible");
+            return interaction.editReply(tr("common.dbUnavailable"));
         }
 
         // ── Validation du format ──────────────────────────────────────────────
         const [gameName, tagLine] = riotId.split("#");
         if (!gameName || !tagLine) {
             logger.warn('COMMAND', `Format Riot ID invalide : ${riotId}`, { user: interaction.user.tag });
-            return interaction.editReply("❌ Format invalide ! Utilisez : Pseudonyme#TAG");
+            return interaction.editReply(tr("add.invalidFormat"));
         }
 
         // ── Vérification doublon actif sur CE serveur ─────────────────────────
@@ -46,7 +48,7 @@ module.exports = {
             logger.info('COMMAND', `Compte déjà surveillé sur ce serveur : ${riotId}`, {
                 guild: interaction.guildId
             });
-            return interaction.editReply("❌ Ce compte est déjà surveillé sur ce serveur !");
+            return interaction.editReply(tr("add.alreadyTracked"));
         }
 
         // ── Appels API Riot ───────────────────────────────────────────────────
@@ -165,11 +167,10 @@ module.exports = {
             // ── Réponse ───────────────────────────────────────────────────────
             const isAlreadyKnown = !!existingPlayer;
             const embed = new EmbedBuilder()
-                .setTitle("✅ Compte ajouté !")
+                .setTitle(tr("add.title"))
                 .setDescription(
-                    `**${riotId}** est maintenant surveillé sur ce serveur !\n` +
-                    `📊 **Rang :** ${currentRank} (${currentLP} LP)` +
-                    (isAlreadyKnown ? `\n\n*Ce joueur est déjà suivi sur d'autres serveurs, les stats sont partagées !*` : "")
+                    tr("add.description", { riotId, rank: currentRank, lp: currentLP }) +
+                    (isAlreadyKnown ? `\n\n${tr("add.sharedStats")}` : "")
                 )
                 .setColor(0x00ff00)
                 .setTimestamp();
@@ -179,19 +180,19 @@ module.exports = {
         } catch (error) {
             if (error.response?.status === 404) {
                 logger.warn('API', `Joueur introuvable sur Riot : ${riotId}`, { status: 404 });
-                await interaction.editReply(`❌ Joueur introuvable : **${riotId}**`);
+                await interaction.editReply(tr("add.notFound", { riotId }));
             } else if (error.response?.status === 403) {
                 logger.error('API', `Clé API Riot invalide ou expirée`, { status: 403 });
-                await interaction.editReply(`❌ Clé API Riot invalide ou expirée !`);
+                await interaction.editReply(tr("add.invalidApiKey"));
             } else if (error.code === 'SQLITE_CONSTRAINT') {
                 logger.error('DB', `Contrainte BDD violée pour ${riotId}`, { error: error.message });
-                await interaction.editReply("❌ Ce compte existe déjà dans la base de données.");
+                await interaction.editReply(tr("add.alreadyInDb"));
             } else {
                 logger.error('COMMAND', `Erreur inattendue /add pour ${riotId}`, {
                     error: error.message,
                     status: error.response?.status
                 });
-                await interaction.editReply(`❌ Erreur : ${error.message}`);
+                await interaction.editReply(tr("common.errorWithMessage", { message: error.message }));
             }
         }
     },

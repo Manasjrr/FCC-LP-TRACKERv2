@@ -6,11 +6,12 @@ const logger = require("./utils/loggers");
 
 // ─── Services & Handlers ──────────────────────────────────────────────────────
 const { initDB } = require("./database/initDB");
-const { loadCommands, deployCommands, deployToNewGuild } = require("./handlers/commandHandler");
+const { loadCommands, deployCommands, deployToSingleGuild } = require("./handlers/commandHandler");
 const { handleInteraction } = require("./handlers/interactionHandler");
 const { checkAllPlayers } = require("./services/monitoringService");
 const { checkApiStatus } = require("./services/riotApiService");
 const { sendWeeklyRecap } = require("./utils/weeklyRecap");
+const { t, DEFAULT_LANGUAGE } = require("./utils/i18n");
 
 // ─── Vérification des variables d'environnement ───────────────────────────────
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -60,7 +61,7 @@ client.once("ready", async () => {
         if (!ok) {
             try {
                 const user = await client.users.fetch(process.env.OWNER_ID);
-                await user.send("**API RIOT DOWN** - La clé API ne fonctionne plus !");
+                await user.send(t(DEFAULT_LANGUAGE, "owner.apiDown"));
                 logger.info("API", "MP d'alerte envoyé");
             } catch (err) {
                 logger.error("API", "Erreur envoi MP alerte", { error: err.message });
@@ -76,10 +77,10 @@ client.once("ready", async () => {
     logger.success("BOOT", "Bot entièrement opérationnel ✅");
 });
 
-// Nouveau serveur → déploiement automatique
+// Nouveau serveur → déploiement automatique (en anglais par défaut)
 client.on("guildCreate", async (guild) => {
     logger.info("BOOT", `Nouveau serveur : ${guild.name} (${guild.id})`);
-    await deployToNewGuild(client, guild);
+    await deployToSingleGuild(client, guild);
 });
 
 // Toutes les interactions

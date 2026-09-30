@@ -10,6 +10,7 @@ const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = requir
 const { isSameTeamGroup, sortEntriesByRole, buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildFlexMatchEmbed, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
 const { computeGameScore } = require("../utils/ratingUtils");
+const { getTranslator } = require("../utils/i18n");
 const logger = require("../utils/loggers");
 
 // ─── Version du patch (Data Dragon) ───────────────────────────────────────────
@@ -34,7 +35,7 @@ setInterval(updatePatchVersion, 24 * 60 * 60 * 1000);
 
 // ─── Notification changement de rang ─────────────────────────────────────────
 async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP, channel) {
-    const embed = buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP);
+    const embed = buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP, getTranslator(channel.guildId));
     await channel.send({ embeds: [embed] });
 }
 
@@ -89,7 +90,7 @@ async function processSoloQMatches(player, guildEntries, newMatchIds, { pendingN
         // Changement de pseudo : annoncé dans chaque salon qui suit le joueur
         if (result?.riotIdChange) {
             for (const guildEntry of guildEntries) {
-                pendingRenames.push({ channelId: guildEntry.channel_id, ...result.riotIdChange });
+                pendingRenames.push({ channelId: guildEntry.channel_id, guildId: guildEntry.guild_id, ...result.riotIdChange });
             }
         }
 
@@ -307,7 +308,7 @@ async function sendPendingFlexNotifications(client, pendingFlexNotifications) {
             });
 
             const buildPayload = () => ({
-                embeds: [buildFlexMatchEmbed(entries, match, matchId, patchVersion)],
+                embeds: [buildFlexMatchEmbed(entries, match, matchId, patchVersion, getTranslator(guildId))],
                 components: [],
             });
 
@@ -354,11 +355,11 @@ function getTrackedPlayersInMatch(match, guildId) {
 
 // ─── Envoi des changements de pseudo collectés ───────────────────────────────
 async function sendPendingRenames(client, pendingRenames) {
-    for (const { channelId, oldRiotId, newRiotId } of pendingRenames) {
+    for (const { channelId, guildId, oldRiotId, newRiotId } of pendingRenames) {
         try {
             const channel = await client.channels.fetch(channelId).catch(() => null);
             if (!channel) continue;
-            await channel.send({ embeds: [buildRiotIdChangeEmbed(oldRiotId, newRiotId)] });
+            await channel.send({ embeds: [buildRiotIdChangeEmbed(oldRiotId, newRiotId, getTranslator(guildId))] });
         } catch (error) {
             logger.error("MONITOR", `Erreur envoi changement de pseudo ${oldRiotId} → ${newRiotId}`, {
                 channel: channelId,
@@ -485,12 +486,14 @@ async function sendPendingNotifications(client, pendingNotifications) {
                 ? getTrackedPlayersInMatch(match, guildId).filter((m) => m.id !== entries[0].player.id)
                 : [];
 
+            // Notification dans la langue du serveur
+            const tr = getTranslator(guildId);
             const buildPayload = () => {
                 if (entries.length > 1) {
-                    const { embeds, rows } = buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion);
+                    const { embeds, rows } = buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion, tr);
                     return { embeds, components: rows };
                 }
-                const { embed, row } = buildMatchNotifEmbed(entries[0], match, matchId, patchVersion, trackedMates);
+                const { embed, row } = buildMatchNotifEmbed(entries[0], match, matchId, patchVersion, trackedMates, tr);
                 return { embeds: [embed], components: [row] };
             };
 

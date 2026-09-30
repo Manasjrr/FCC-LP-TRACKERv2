@@ -197,6 +197,16 @@ function runMigrations(db) {
         console.log("Migration : colonne group_thumbnail ajoutée à guild_settings");
     }
 
+    // Migration 6c — Langue du bot par serveur (anglais par défaut, /language pour changer)
+    const hasLanguage = db.prepare(`
+        SELECT COUNT(*) as count FROM pragma_table_info('guild_settings') WHERE name = 'language'
+    `).get().count > 0;
+
+    if (!hasLanguage) {
+        db.prepare(`ALTER TABLE guild_settings ADD COLUMN language TEXT DEFAULT 'en'`).run();
+        console.log("Migration : colonne language ajoutée à guild_settings");
+    }
+
     // Migration 7 — Dernier match ranked (SoloQ + Flex) traité par joueur
     // (curseur du mode "ranked" utilisé quand /flex est activé)
     const hasLastRankedMatch = db.prepare(`

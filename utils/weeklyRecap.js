@@ -2,6 +2,7 @@ const { EmbedBuilder } = require('discord.js');
 const { getRankEmoji, getRankOrder } = require('./rankUtils');
 const logger = require('./loggers');
 const { computePlayerRating } = require('./ratingUtils');
+const { getTranslator } = require('./i18n');
 
 // ─── Note de la semaine d'un joueur ───────────────────────────────────────────
 // Note en fin de semaine + évolution depuis le début de la semaine
@@ -73,7 +74,7 @@ function getPlayerTopChampion(player, weekStart, weekEnd) {
         LIMIT 1
     `).get(player.id, startMs, endMs);
 
-    if (!row) return { champion_name: 'Aucun', games_count: 0, wins_count: 0, winrate: 0 };
+    if (!row) return { champion_name: '—', games_count: 0, wins_count: 0, winrate: 0 };
 
     return {
         champion_name: row.champion_name,
@@ -171,12 +172,13 @@ async function generateRecapForGuild(guildId, weekStart, weekEnd) {
 }
 
 // ─── Construction de l'embed ──────────────────────────────────────────────────
-function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
-    const startStr = weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-    const endStr = weekEnd.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+// tr = traducteur i18n (langue du serveur)
+function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd, tr) {
+    const startStr = weekStart.toLocaleDateString(tr.locale, { day: '2-digit', month: '2-digit' });
+    const endStr = weekEnd.toLocaleDateString(tr.locale, { day: '2-digit', month: '2-digit' });
 
-    let description = `📅 **Semaine du ${startStr} au ${endStr}**\n\n`;
-    description += `📈 **LES JOUEURS DE LA SEMAINE :**\n\n`;
+    let description = `${tr('recap.week', { start: startStr, end: endStr })}\n\n`;
+    description += `${tr('recap.players')}\n\n`;
 
     playerStats.forEach((player, index) => {
         let medal;
@@ -210,18 +212,24 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
         }
 
         description += `${medal} **${player.riot_id}**\n`;
-        description += `├─ 🎮 **${player.total_games} games** (${player.wins}W • ${player.losses}L - ${player.winrate}% WR)\n`;
+        description += `├─ ${tr('recap.games', { count: player.total_games, wins: player.wins, losses: player.losses, winrate: player.winrate })}\n`;
         description += `├─ ${lpEmoji} **${lpSign}${player.total_lp_change} LP** • ${rankDisplay}\n`;
         if (player.rating) {
             const diffText = player.ratingDiff == null
                 ? ''
-                : player.ratingDiff > 0 ? ` • 📈 +${player.ratingDiff} cette semaine`
-                : player.ratingDiff < 0 ? ` • 📉 ${player.ratingDiff} cette semaine`
-                : ' • ➖ stable';
-            description += `├─ 🧮 **Note :** ${player.rating.score}/100 (${player.rating.tier.grade})${diffText}\n`;
+                : player.ratingDiff > 0 ? tr('recap.ratingUp', { diff: player.ratingDiff })
+                : player.ratingDiff < 0 ? tr('recap.ratingDown', { diff: player.ratingDiff })
+                : tr('recap.ratingStable');
+            description += `├─ ${tr('recap.rating', { score: player.rating.score, grade: player.rating.tier.grade, diff: diffText })}\n`;
         }
-        description += `├─ 🦹 **Champion favori :** ${player.most_played_champion} (${player.champion_games} games - ${player.champion_winrate}% WR)\n`;
-        description += `└─ ⚔️ **KDA moyen :** ${Number(player.avg_kills).toFixed(1)}/${Number(player.avg_deaths).toFixed(1)}/${Number(player.avg_assists).toFixed(1)}\n\n`;
+        description += `├─ ${tr('recap.favoriteChampion', {
+            champion: player.most_played_champion,
+            games: player.champion_games,
+            winrate: player.champion_winrate,
+        })}\n`;
+        description += `└─ ${tr('recap.avgKda', {
+            kda: `${Number(player.avg_kills).toFixed(1)}/${Number(player.avg_deaths).toFixed(1)}/${Number(player.avg_assists).toFixed(1)}`,
+        })}\n\n`;
     });
 
     const totalGames = playerStats.reduce((s, p) => s + p.total_games, 0);
@@ -230,21 +238,22 @@ function createWeeklyRecapEmbed(playerStats, weekStart, weekEnd) {
     const groupWR = totalGames > 0 ? ((totalWins / totalGames) * 100).toFixed(1) : '0.0';
 
     const globalStatsBlock =
-        `📊 **STATS GLOBALES**\n` +
-        `• Total games : ${totalGames} • Groupe WR : ${groupWR}%\n` +
-        `• LP net du groupe : ${totalLP >= 0 ? '+' : ''}${totalLP} LP`;
-    const MAX_BODY_LENGTH = 4096 - globalStatsBlock.length - 10;
+        `${tr('recap.globalStats')}\n` +
+        `${tr('recap.totalGames', { games: totalGames, winrate: groupWR })}\n` +
+        tr('recap.groupLp', { lp: `${totalLP >= 0 ? '+' : ''}${totalLP}` });
+    const tooManyText = `\n${tr('recap.tooManyPlayers')}\n\n`;
+    const MAX_BODY_LENGTH = 4096 - globalStatsBlock.length - tooManyText.length;
     if (description.length > MAX_BODY_LENGTH) {
-        description = description.substring(0, MAX_BODY_LENGTH) + '\n*... (trop de joueurs pour afficher tout)*\n\n';
+        description = description.substring(0, MAX_BODY_LENGTH) + tooManyText;
     }
 
     description += globalStatsBlock;
 
     return new EmbedBuilder()
-        .setTitle('🏆 RÉCAP HEBDOMADAIRE')
+        .setTitle(tr('recap.title'))
         .setDescription(description)
         .setColor(totalLP >= 0 ? 0x00ff88 : 0xff4444)
-        .setFooter({ text: `Récap généré le ${new Date().toLocaleDateString('fr-FR')}` });
+        .setFooter({ text: tr('recap.footer', { date: new Date().toLocaleDateString(tr.locale) }) });
 }
 
 // ─── Envoi dans tous les serveurs ─────────────────────────────────────────────
@@ -281,7 +290,7 @@ async function sendWeeklyRecap(client) {
                 continue;
             }
 
-            const embed = createWeeklyRecapEmbed(playerStats, weekStart, weekEnd);
+            const embed = createWeeklyRecapEmbed(playerStats, weekStart, weekEnd, getTranslator(guild_id));
             const discordGuild = client.guilds.cache.get(guild_id);
 
             if (!discordGuild) {

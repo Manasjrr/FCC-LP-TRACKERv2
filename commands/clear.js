@@ -1,15 +1,16 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
+const { DEFAULT_LANGUAGE, t, getTranslator } = require("../utils/i18n");
 const logger = require("../utils/loggers");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("clear")
-        .setDescription("Supprimer tous les messages du channel")
+        .setDescription(t(DEFAULT_LANGUAGE, "commands.clear.description"))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addIntegerOption(option =>
             option
-                .setName("nombre")
-                .setDescription("Nombre de messages à supprimer (max 1000, défaut: tous)")
+                .setName("count")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.clear.options.count.description"))
                 .setRequired(false)
                 .setMinValue(1)
                 .setMaxValue(1000)
@@ -17,13 +18,14 @@ module.exports = {
         .addStringOption(option =>
             option
                 .setName("channel")
-                .setDescription("ID du channel à nettoyer (défaut: channel actuel)")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.clear.options.channel.description"))
                 .setRequired(false)
         ),
 
     async execute(interaction) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+        const tr = getTranslator(interaction.guildId);
         const userId = interaction.user.id;
         const member = interaction.member;
         const isSpecialUser = userId === process.env.OWNER_ID;
@@ -34,15 +36,15 @@ module.exports = {
 
             const deniedEmbed = new EmbedBuilder()
                 .setColor("#ff0000")
-                .setTitle("🚫 Accès refusé")
-                .setDescription("Vous n'avez pas les permissions nécessaires pour utiliser cette commande.")
-                .addFields({ name: "Permissions requises", value: "• Administrateur\n• Utilisateur autorisé" })
+                .setTitle(tr("common.accessDeniedTitle"))
+                .setDescription(tr("common.accessDenied"))
+                .addFields({ name: tr("common.requiredPermissions"), value: tr("common.requiredPermissionsList") })
                 .setTimestamp();
 
             return await interaction.editReply({ embeds: [deniedEmbed] });
         }
 
-        const nombre = interaction.options.getInteger("nombre");
+        const nombre = interaction.options.getInteger("count");
         const channelId = interaction.options.getString("channel");
 
         logger.info('COMMAND', `/clear exécuté par ${interaction.user.tag}`, {
@@ -62,8 +64,8 @@ module.exports = {
                     return await interaction.editReply({
                         embeds: [new EmbedBuilder()
                             .setColor("#ff0000")
-                            .setTitle("❌ Channel invalide")
-                            .setDescription("Le channel spécifié n'est pas un channel textuel.")
+                            .setTitle(tr("clear.invalidChannelTitle"))
+                            .setDescription(tr("clear.invalidChannel"))
                             .setTimestamp()
                         ]
                     });
@@ -73,9 +75,9 @@ module.exports = {
                 return await interaction.editReply({
                     embeds: [new EmbedBuilder()
                         .setColor("#ff0000")
-                        .setTitle("❌ Channel introuvable")
-                        .setDescription(`Impossible de trouver le channel avec l'ID: \`${channelId}\``)
-                        .addFields({ name: "Vérifiez que", value: "• L'ID est correct\n• Le bot a accès au channel\n• Le channel existe sur ce serveur" })
+                        .setTitle(tr("clear.channelNotFoundTitle"))
+                        .setDescription(tr("clear.channelNotFound", { id: channelId }))
+                        .addFields({ name: tr("clear.checkTitle"), value: tr("clear.checkList") })
                         .setTimestamp()
                     ]
                 });
@@ -92,11 +94,11 @@ module.exports = {
                     await interaction.editReply({
                         embeds: [new EmbedBuilder()
                             .setColor("#ffaa00")
-                            .setTitle("⏳ Suppression en cours...")
-                            .setDescription(`**${count}** messages supprimés jusqu'à présent...`)
+                            .setTitle(tr("clear.progressTitle"))
+                            .setDescription(tr("clear.progress", { count }))
                             .addFields(
-                                { name: "Channel", value: `<#${targetChannel.id}>` },
-                                { name: "⚠️ Note", value: "Ne pas fermer Discord pendant l'opération." }
+                                { name: tr("clear.channel"), value: `<#${targetChannel.id}>` },
+                                { name: tr("clear.noteTitle"), value: tr("clear.note") }
                             )
                             .setTimestamp()
                         ]
@@ -185,11 +187,11 @@ module.exports = {
             await interaction.editReply({
                 embeds: [new EmbedBuilder()
                     .setColor("#00ff00")
-                    .setTitle("🧹 Messages supprimés")
-                    .setDescription(`✅ **${deletedCount}** messages ont été supprimés !`)
+                    .setTitle(tr("clear.doneTitle"))
+                    .setDescription(tr("clear.done", { count: deletedCount }))
                     .addFields(
-                        { name: "Channel", value: `<#${targetChannel.id}> (\`${targetChannel.name}\`)` },
-                        { name: "Exécuté par", value: `${interaction.user.tag}${isSpecialUser ? " (Utilisateur spécial)" : " (Administrateur)"}` }
+                        { name: tr("clear.channel"), value: `<#${targetChannel.id}> (\`${targetChannel.name}\`)` },
+                        { name: tr("clear.executedBy"), value: `${interaction.user.tag} ${tr(isSpecialUser ? "clear.specialUser" : "clear.admin")}` }
                     )
                     .setTimestamp()
                 ]
@@ -203,22 +205,22 @@ module.exports = {
                 user: interaction.user.tag
             });
 
-            let errorMessage = "Impossible de supprimer les messages.";
+            let errorMessage = tr("clear.error");
             let errorDetails = error.message;
 
             if (error.code === 50013) {
-                errorMessage = "Permissions insuffisantes.";
-                errorDetails = "Le bot n'a pas les permissions nécessaires dans ce channel.";
+                errorMessage = tr("clear.missingPermissions");
+                errorDetails = tr("clear.missingPermissionsDetails");
             }
 
             await interaction.editReply({
                 embeds: [new EmbedBuilder()
                     .setColor("#ff0000")
-                    .setTitle("❌ Erreur")
+                    .setTitle(tr("clear.errorTitle"))
                     .setDescription(errorMessage)
                     .addFields(
-                        { name: "Channel", value: `<#${targetChannel.id}> (\`${targetChannel.name}\`)` },
-                        { name: "Détails", value: `\`\`\`${errorDetails}\`\`\`` }
+                        { name: tr("clear.channel"), value: `<#${targetChannel.id}> (\`${targetChannel.name}\`)` },
+                        { name: tr("clear.details"), value: `\`\`\`${errorDetails}\`\`\`` }
                     )
                     .setTimestamp()
                 ]

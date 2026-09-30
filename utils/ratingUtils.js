@@ -21,63 +21,53 @@ const FORM_SCALE = [
 ];
 
 // ─── Paliers ──────────────────────────────────────────────────────────────────
+// Libellés traduits : locales → rating.tiers.<grade> (voir getTierLabel)
 const RATING_TIERS = [
-    { min: 85, grade: "S+", label: "🌟 CANNA-MESSI-CR7", color: 0xf0e68c },
-    { min: 69, grade: "S",  label: "🔥 EXCELLENT",       color: 0x8500ff },
-    { min: 60, grade: "A",  label: "⭐ TRÈS BON",        color: 0x00ff00 },
-    { min: 52, grade: "B",  label: "✅ SOLIDE",          color: 0x00bfff },
-    { min: 44, grade: "C",  label: "⚡ MOYEN",           color: 0xffd700 },
-    { min: 35, grade: "D",  label: "❌ MAUVAIS",         color: 0xff8c00 },
-    { min: 0,  grade: "Z",  label: "❄️ RAZMO TIER",      color: 0xff6b6b },
+    { min: 85, grade: "S+", color: 0xf0e68c },
+    { min: 69, grade: "S",  color: 0x8500ff },
+    { min: 60, grade: "A",  color: 0x00ff00 },
+    { min: 52, grade: "B",  color: 0x00bfff },
+    { min: 44, grade: "C",  color: 0xffd700 },
+    { min: 35, grade: "D",  color: 0xff8c00 },
+    { min: 0,  grade: "Z",  color: 0xff6b6b },
 ];
 
 function getRatingTier(score) {
     return RATING_TIERS.find((t) => score >= t.min);
 }
 
-// ─── Rôles ────────────────────────────────────────────────────────────────────
-const ROLE_LABELS = {
-    TOP: "Top",
-    JUNGLE: "Jungle",
-    MIDDLE: "Mid",
-    BOTTOM: "ADC",
-    UTILITY: "Support",
-    DEFAULT: "Inconnu",
-};
-
-const CATEGORY_LABELS = {
-    combat: "⚔️ Combat",
-    farm: "🌾 Farm",
-    lane: "🥊 Lane",
-    vision: "👁️ Vision",
-    objectives: "🏰 Objectifs",
-};
+// ─── Libellés traduits (tr = traducteur i18n) ────────────────────────────────
+// Rôles : locales → roles.<ROLE> · catégories : rating.categories.<cat> · stats : rating.metrics.<metric>
+const getTierLabel = (tier, tr) => tr(`rating.tiers.${tier.grade}`);
+const getRoleLabel = (role, tr) => tr(`roles.${role}`);
+const getCategoryLabel = (category, tr) => tr(`rating.categories.${category}`);
+const getMetricLabel = (metric, tr) => tr(`rating.metrics.${metric}`);
 
 // ─── Métriques (valeur extraite d'une ligne de match_history) ─────────────────
+// Libellés traduits : locales → rating.metrics.<metric>
 const pct = (v) => `${Math.round(v * 100)}%`;
 const dec = (d) => (v) => v.toFixed(d);
 const signed = (v) => `${v >= 0 ? "+" : ""}${Math.round(v)}`;
 
 const METRICS = {
-    kda:                { label: "KDA",                fmt: dec(1), get: (m) => (m.kills + m.assists) / Math.max(1, m.deaths) },
-    kill_participation: { label: "Participation kills", fmt: pct,   get: (m) => m.kill_participation },
-    damage_share:       { label: "Part des dégâts",     fmt: pct,   get: (m) => m.damage_share },
-    solo_kills:         { label: "Solo kills",          fmt: dec(1), get: (m) => m.solo_kills },
-    cs_per_min:         { label: "CS/min",              fmt: dec(1), get: (m) => m.cs_per_min },
-    cs_10:              { label: "CS à 10 min",         fmt: dec(0), get: (m) => m.cs_10 },
-    vision_per_min:     { label: "Vision/min",          fmt: dec(2), get: (m) => m.vision_per_min },
-    control_wards:      { label: "Pinks achetées",      fmt: dec(1), get: (m) => m.control_wards },
-    wards_killed:       { label: "Wards détruites",     fmt: dec(1), get: (m) => m.wards_killed },
-    turret_takedowns:   { label: "Tours détruites",     fmt: dec(1), get: (m) => m.turret_takedowns },
+    kda:                { fmt: dec(1), get: (m) => (m.kills + m.assists) / Math.max(1, m.deaths) },
+    kill_participation: { fmt: pct,    get: (m) => m.kill_participation },
+    damage_share:       { fmt: pct,    get: (m) => m.damage_share },
+    solo_kills:         { fmt: dec(1), get: (m) => m.solo_kills },
+    cs_per_min:         { fmt: dec(1), get: (m) => m.cs_per_min },
+    cs_10:              { fmt: dec(0), get: (m) => m.cs_10 },
+    vision_per_min:     { fmt: dec(2), get: (m) => m.vision_per_min },
+    control_wards:      { fmt: dec(1), get: (m) => m.control_wards },
+    wards_killed:       { fmt: dec(1), get: (m) => m.wards_killed },
+    turret_takedowns:   { fmt: dec(1), get: (m) => m.turret_takedowns },
     // aggregate : notée sur la moyenne de toutes les games du rôle (pas game par game)
-    team_grubs:         { label: "Void grubs (équipe)", fmt: dec(1), get: (m) => m.team_grubs, aggregate: true },
-    team_heralds:       { label: "Héraut (équipe)",     fmt: pct,   get: (m) => m.team_heralds, aggregate: true },
-    early_dragons:      { label: "2 premiers dragons",  fmt: dec(1), get: (m) => m.early_dragons },
-    gold_diff_15:       { label: "Gold diff à 15 min",  fmt: signed, get: (m) => m.gold_diff_15 },
-    xp_diff_15:         { label: "XP diff à 15 min",    fmt: signed, get: (m) => m.xp_diff_15 },
-    cs_diff_15:         { label: "CS diff à 15 min",    fmt: signed, get: (m) => m.cs_diff_15 },
+    team_grubs:         { fmt: dec(1), get: (m) => m.team_grubs, aggregate: true },
+    team_heralds:       { fmt: pct,    get: (m) => m.team_heralds, aggregate: true },
+    early_dragons:      { fmt: dec(1), get: (m) => m.early_dragons },
+    gold_diff_15:       { fmt: signed, get: (m) => m.gold_diff_15 },
+    xp_diff_15:         { fmt: signed, get: (m) => m.xp_diff_15 },
+    cs_diff_15:         { fmt: signed, get: (m) => m.cs_diff_15 },
     epic_monsters:      {
-        label: "Dragons + Barons",
         fmt: dec(1),
         get: (m) => (m.dragon_kills == null && m.baron_kills == null ? null : (m.dragon_kills ?? 0) + (m.baron_kills ?? 0)),
     },
@@ -275,7 +265,6 @@ function computePlayerRating(playerId, { before } = {}) {
             metricBreakdown.push({
                 category,
                 metric,
-                label: METRICS[metric].label,
                 value,
                 display: METRICS[metric].fmt(value),
                 target: METRICS[metric].fmt(bounds[1]),
@@ -355,10 +344,9 @@ function getGameScoreDetails(match) {
 
         const metricDetails = Object.entries(metrics).map(([metric, bounds]) => {
             const m = result.metrics[metric];
-            const { label, fmt } = METRICS[metric];
+            const { fmt } = METRICS[metric];
             return {
                 metric,
-                label,
                 weight: metricWeight(bounds),
                 min: fmt(bounds[0]),
                 target: fmt(bounds[1]),
@@ -376,7 +364,6 @@ function getGameScoreDetails(match) {
 
         return {
             category,
-            label: CATEGORY_LABELS[category],
             weight,
             available,
             max,
@@ -391,7 +378,6 @@ function getGameScoreDetails(match) {
 
     return {
         role,
-        roleLabel: ROLE_LABELS[role],
         score,
         tier: getRatingTier(score),
         rawPoints,
@@ -408,12 +394,12 @@ function getRatingEvolution(playerId, days = 7, current = computePlayerRating(pl
     return { days, current: current.score, past: past.score, diff: current.score - past.score };
 }
 
-// Texte court : "📈 +4 (7j)" / "📉 -2 (7j)" / "➖ =0 (7j)"
-function formatEvolution(evolution) {
+// Texte court : "📈 +4 (7d)" / "📉 -2 (7d)" / "➖ 0 (7d)"
+function formatEvolution(evolution, tr) {
     if (!evolution) return null;
     const { diff, days } = evolution;
     const emoji = diff > 0 ? "📈" : diff < 0 ? "📉" : "➖";
-    return `${emoji} ${diff > 0 ? "+" : ""}${diff} (${days}j)`;
+    return tr("rating.evolution", { emoji, diff: `${diff > 0 ? "+" : ""}${diff}`, days });
 }
 
 // ─── Classement des notes sur un serveur ─────────────────────────────────────
@@ -429,9 +415,11 @@ module.exports = {
     CONFIDENT_GAMES,
     RATING_TIERS,
     ROLE_PROFILES,
-    ROLE_LABELS,
-    CATEGORY_LABELS,
     getRatingTier,
+    getTierLabel,
+    getRoleLabel,
+    getCategoryLabel,
+    getMetricLabel,
     computePlayerRating,
     computeGameScore,
     getGameScoreDetails,

@@ -1,0 +1,468 @@
+// ─── Français ─────────────────────────────────────────────────────────────────
+// Mêmes clés que locales/en.js (référence). Une clé absente ici retombe sur l'anglais.
+
+const plural = (count, one, many) => (count > 1 ? many : one);
+
+module.exports = {
+    meta: {
+        name: "Français",
+        locale: "fr-FR",
+        discordLocale: "fr",
+    },
+
+    // ─── Définition des slash commands ────────────────────────────────────────
+    commands: {
+        add: {
+            description: "Ajouter un compte League of Legends au monitoring",
+            options: {
+                "riot-id": { description: "Riot ID (Nom#TAG)" },
+            },
+        },
+        remove: {
+            description: "Supprimer un compte du monitoring",
+            options: {
+                player: { name: "joueur", description: "Riot ID du compte à supprimer" },
+            },
+        },
+        list: {
+            description: "Affiche la liste des comptes surveillés",
+        },
+        stats: {
+            description: "Statistiques détaillées d'un joueur avec analyse de performance",
+            options: {
+                player: { name: "joueur", description: "Riot ID du joueur" },
+            },
+        },
+        history: {
+            description: "Historique des derniers matchs d'un joueur",
+            options: {
+                player: { name: "joueur", description: "Riot ID du joueur" },
+                count: { name: "nombre", description: "Nombre de matchs à afficher (1-25, défaut : 5)" },
+            },
+        },
+        ingame: {
+            description: "Affiche les joueurs surveillés actuellement en partie (SoloQ / Flex)",
+        },
+        flex: {
+            description: "Réglages des notifications Flex (admins uniquement)",
+            options: {
+                enabled: { name: "activer", description: "true = notifier les parties Flex, false = ne plus les notifier" },
+                thumbnail: {
+                    name: "vignette",
+                    description: "Vignette des parties à 3+ joueurs suivis / face-à-face",
+                    choices: {
+                        gif: "GIF animé (chaque champion + son rôle)",
+                        mosaique: "Mosaïque (tous les champions en une image)",
+                    },
+                },
+            },
+        },
+        clear: {
+            description: "Supprimer tous les messages du channel",
+            options: {
+                count: { name: "nombre", description: "Nombre de messages à supprimer (max 1000, défaut: tous)" },
+                channel: { description: "ID du channel à nettoyer (défaut: channel actuel)" },
+            },
+        },
+        forcerecap: {
+            description: "Force le recap hebdomadaire (OWNER ONLY)",
+        },
+        help: {
+            description: "Affiche la documentation et la liste des commandes disponibles",
+        },
+        language: {
+            description: "Changer la langue du bot sur ce serveur (admins uniquement)",
+            options: {
+                language: { name: "langue", description: "Nouvelle langue du bot" },
+            },
+        },
+    },
+
+    // ─── Commun ───────────────────────────────────────────────────────────────
+    common: {
+        dbUnavailable: "❌ Base de données indisponible",
+        playerNotFound: "❌ Aucun joueur trouvé pour **{player}** sur ce serveur.\n*Utilise l'autocomplétion ou vérifie `/list`.*",
+        playerNotFoundById: "❌ Joueur introuvable (ID: {id})",
+        noTrackedAccounts: "📭 Aucun compte surveillé sur ce serveur.",
+        error: "❌ Erreur survenue",
+        errorWithMessage: "❌ Erreur : {message}",
+        requestedBy: "Demandé par {user}",
+        accessDeniedTitle: "🚫 Accès refusé",
+        accessDenied: "Vous n'avez pas les permissions nécessaires pour utiliser cette commande.",
+        requiredPermissions: "Permissions requises",
+        requiredPermissionsList: "• Administrateur\n• Utilisateur autorisé",
+        winsInARow: ({ count }) => `${count} ${plural(count, "victoire", "victoires")} d'affilée`,
+        lossesInARow: ({ count }) => `${count} ${plural(count, "défaite", "défaites")} d'affilée`,
+    },
+
+    roles: {
+        TOP: "Top",
+        JUNGLE: "Jungle",
+        MIDDLE: "Mid",
+        BOTTOM: "ADC",
+        UTILITY: "Support",
+        DEFAULT: "Inconnu",
+    },
+
+    // ─── Commandes ────────────────────────────────────────────────────────────
+    add: {
+        invalidFormat: "❌ Format invalide ! Utilisez : Pseudonyme#TAG",
+        alreadyTracked: "❌ Ce compte est déjà surveillé sur ce serveur !",
+        title: "✅ Compte ajouté !",
+        description: "**{riotId}** est maintenant surveillé sur ce serveur !\n📊 **Rang :** {rank} ({lp} LP)",
+        sharedStats: "*Ce joueur est déjà suivi sur d'autres serveurs, les stats sont partagées !*",
+        notFound: "❌ Joueur introuvable : **{riotId}**",
+        invalidApiKey: "❌ Clé API Riot invalide ou expirée !",
+        alreadyInDb: "❌ Ce compte existe déjà dans la base de données.",
+    },
+
+    remove: {
+        title: "🗑️ Compte retiré du monitoring",
+        descriptionAddedBy: "**{riotId}** (ajouté par {user}) n'est plus surveillé sur ce serveur.\n*L'historique des parties est conservé.*",
+        description: "**{riotId}** n'est plus surveillé sur ce serveur.\n*L'historique des parties est conservé.*",
+        error: "❌ Erreur lors de la suppression.",
+    },
+
+    list: {
+        title: "📋 Comptes surveillés",
+        footer: ({ count }) => `${count} ${plural(count, "compte", "comptes")} au total`,
+        sortedByRank: "🏆 *Classés par rang décroissant*",
+        provisional: "*prov.*",
+        userNotFound: "⚠️ Utilisateur/Channel introuvable",
+        dpmLeaderboard: "ℹ️ Classement DPM",
+    },
+
+    stats: {
+        noRating: "❔ Pas encore de note (aucune game)",
+        provisional: "*provisoire*",
+        noStreak: "➖ Aucune série en cours",
+        requestedBy: "*Analyse demandée par {user}*",
+        rankTitle: "🏆 **RANG & PROGRESSION**",
+        lpLast50: "{lp} LP (50 dernières)",
+        performanceTitle: "⚡ **PERFORMANCE RÉCENTE**",
+        serverTitle: "🌐 **CLASSEMENT SERVEUR**",
+        gamesAnalyzed: ({ count }) => `🎯 ${count} ${plural(count, "partie analysée", "parties analysées")}`,
+        championsTitle: "🏆 CHAMPIONS RÉCENTS",
+        footer: "🔄 {time} • Cache 10 min",
+        localData: "🔗 Données locales uniquement",
+        lastKnownRank: "🏆 **DERNIER RANG CONNU**",
+        savedLocally: "⚠️ Données sauvegardées localement",
+        apiUnavailable: "API Riot indisponible – Réessaye plus tard",
+        buttons: {
+            refresh: "🔄 Actualiser",
+            lpChart: "📈 Graphique LP",
+            history: "📜 Historique",
+            ratingInfo: "🧮 Infos note",
+        },
+    },
+
+    history: {
+        title: "📜 Historique de {riotId}",
+        lastMatches: ({ count }) => `**${count} ${plural(count, "dernier match", "derniers matchs")}**`,
+        maxAvailable: "(maximum disponible)",
+        fieldTitle: "🎮 Historique des matchs",
+        noMatchesFound: "Aucun match trouvé",
+        statsTitle: "📊 Statistiques globales",
+        avgKda: "⚔️ **KDA moyen:** {kda}",
+        totalLp: "{emoji} **LP total:** {lp}",
+        winrate: "🎯 **Winrate:** {wins}W-{losses}L ({winrate}%)",
+        remakes: ({ count }) =>
+            `⚪ **${plural(count, "Remake", "Remakes")}:** ${count} (${plural(count, "non comptabilisé", "non comptabilisés")})`,
+        minutesAgo: "il y a {n}min",
+        hoursAgo: "il y a {n}h",
+        daysAgo: "il y a {n}j",
+        noMatchesFor: "❌ Aucun match trouvé pour **{riotId}**.",
+        noMatches: "❌ Aucun match trouvé.",
+        error: "❌ Erreur lors de la récupération de l'historique.",
+        modalTitle: "📜 Historique des matchs",
+        modalLabel: "Nombre de matchs à afficher (1-25)",
+        overLimit: "⚠️ Limite dépassée ! Affichage de **25 matchs** maximum.",
+    },
+
+    ingame: {
+        roles: {
+            TOP: "Top",
+            JUNGLE: "Jungle",
+            MID: "Mid",
+            ADC: "ADC",
+            SUPPORT: "Support",
+            NONE: "Rôle inconnu",
+        },
+        teams: {
+            100: "🔵 Côté bleu",
+            200: "🔴 Côté rouge",
+        },
+        queue: "Queue {id}",
+        loading: "🔜 En chargement...",
+        versusTitle: "⚔️ Face-à-face en {queue}",
+        duoTitle: "🤝 Duo Q",
+        groupTitle: "👥 Groupe de {count} en {queue}",
+        winrateLine: "📊 **{winrate}%** WR ({wins}V {losses}D)",
+        checking: ({ count }) => `🔍 Vérification de ${count} ${plural(count, "joueur", "joueurs")} en cours...`,
+        noneTitle: "🎮 Joueurs en partie",
+        noneDescription: "😴 Aucun joueur surveillé n'est actuellement en SoloQ ou Flex.",
+        playersChecked: ({ count }) => `${count} ${plural(count, "joueur vérifié", "joueurs vérifiés")}`,
+        apiErrors: ({ count }) => `⚠️ ${count} ${plural(count, "erreur", "erreurs")} API`,
+        inGameCount: ({ count, total }) => `${count}/${total} ${plural(count, "joueur", "joueurs")} en game`,
+        hiddenGames: ({ count }) => `${count} ${plural(count, "partie non affichée", "parties non affichées")}`,
+        summary: ({ count, games }) =>
+            `🎮 **${count}** ${plural(count, "joueur", "joueurs")} en partie · ${games} ${plural(games, "partie", "parties")}`,
+    },
+
+    flex: {
+        thumbnails: {
+            gif: "🎞️ GIF animé (chaque champion + son rôle)",
+            mosaique: "🧩 Mosaïque (tous les champions en une image)",
+        },
+        enabled: "notifications Flex **activées**",
+        disabled: "notifications Flex **désactivées**",
+        thumbnailChanged: "vignette : **{label}**",
+        title: "⚙️ Notifications Flex",
+        currentSettings: "Réglages actuels du serveur :",
+        flexGames: "Parties Flex",
+        notified: "✅ Notifiées *(ne comptent pas dans les stats, les LP ni les notes)*",
+        notNotified: "❌ Non notifiées",
+        groupThumbnail: "Vignette des groupes (3+ joueurs / face-à-face)",
+        footerChanged: "Modifié par {user} · /flex activer / vignette pour changer",
+        footer: "/flex activer / vignette pour changer",
+    },
+
+    clear: {
+        channel: "Channel",
+        invalidChannelTitle: "❌ Channel invalide",
+        invalidChannel: "Le channel spécifié n'est pas un channel textuel.",
+        channelNotFoundTitle: "❌ Channel introuvable",
+        channelNotFound: "Impossible de trouver le channel avec l'ID: `{id}`",
+        checkTitle: "Vérifiez que",
+        checkList: "• L'ID est correct\n• Le bot a accès au channel\n• Le channel existe sur ce serveur",
+        progressTitle: "⏳ Suppression en cours...",
+        progress: "**{count}** messages supprimés jusqu'à présent...",
+        noteTitle: "⚠️ Note",
+        note: "Ne pas fermer Discord pendant l'opération.",
+        doneTitle: "🧹 Messages supprimés",
+        done: "✅ **{count}** messages ont été supprimés !",
+        executedBy: "Exécuté par",
+        specialUser: "(Utilisateur spécial)",
+        admin: "(Administrateur)",
+        errorTitle: "❌ Erreur",
+        error: "Impossible de supprimer les messages.",
+        missingPermissions: "Permissions insuffisantes.",
+        missingPermissionsDetails: "Le bot n'a pas les permissions nécessaires dans ce channel.",
+        details: "Détails",
+    },
+
+    forcerecap: {
+        ownerOnly: "Cette commande est réservée au propriétaire du bot.",
+        success: "**Recap hebdomadaire forcé avec succès !**\n\nVérifie les salons configurés pour voir les résultats.",
+        error: "❌ **Erreur lors de la génération du recap :**\n```{message}```",
+    },
+
+    help: {
+        title: "📖 Documentation — Ambessa Bot",
+        description: "Voici un aperçu rapide des commandes disponibles.\nPour la documentation complète, clique sur le bouton ci-dessous !\n\n> 🔗 **{url}**",
+        fullDocs: "📖 Documentation complète",
+        commands: {
+            add: { description: "Ajouter un compte League of Legends au monitoring", usage: "/add riot-id: Pseudo#TAG" },
+            remove: { description: "Retirer un compte du monitoring", usage: "/remove joueur: Pseudo#TAG" },
+            list: { description: "Afficher tous les comptes surveillés sur ce serveur", usage: "/list" },
+            stats: { description: "Statistiques détaillées d'un joueur avec analyse de performance", usage: "/stats joueur: Pseudo#TAG" },
+            history: { description: "Historique des derniers matchs d'un joueur (1 à 25)", usage: "/history joueur: Pseudo#TAG [nombre: 5]" },
+            ingame: { description: "Affiche tous les comptes surveillés actuellement en partie", usage: "/ingame" },
+            flex: {
+                description: "Notifications des parties Flex et style de vignette des groupes (admins uniquement)",
+                usage: "/flex [activer: true / false] [vignette: GIF / Mosaïque]",
+            },
+            language: { description: "Changer la langue du bot (admins uniquement)", usage: "/language langue: English / Français" },
+        },
+    },
+
+    language: {
+        title: "🌐 Langue",
+        changed: "✅ Le bot parle désormais **{language}** sur ce serveur.",
+        current: "Langue actuelle : **{language}**",
+        available: "Langues disponibles",
+        commandsUpdating: "*Les descriptions des commandes slash sont en cours de mise à jour, cela peut prendre quelques secondes.*",
+    },
+
+    // ─── Boutons / interactions ───────────────────────────────────────────────
+    buttons: {
+        refreshed: "🔄 **Cache actualisé !**\nRelance `/stats` pour voir les nouvelles données.",
+        unknown: "❓ Bouton non reconnu : {id}",
+        lpChartTitle: "📊 Évolution du Rang",
+        lpChartDescription: "Graphique d'évolution pour **{riotId}**",
+        noRankedGame: "❔ **{riotId}** n'a pas encore de game classée enregistrée.",
+        matchDataNotFound: "❌ Les données du match sont introuvables.",
+        share: "📢 Envoyer à tout le monde",
+        gameScore: "🧮 Détail de la note",
+        noRemakeScore: "⚪ Pas de note pour un remake.",
+        scoreUnavailable: "❌ Note indisponible pour cette game.",
+    },
+
+    graph: {
+        title: "HISTORIQUE ELO",
+        notEnoughData: "Pas assez de données pour générer le graphique",
+    },
+
+    // ─── Note des joueurs ─────────────────────────────────────────────────────
+    rating: {
+        tiers: {
+            "S+": "🌟 CANNA-MESSI-CR7",
+            S: "🔥 EXCELLENT",
+            A: "⭐ TRÈS BON",
+            B: "✅ SOLIDE",
+            C: "⚡ MOYEN",
+            D: "❌ MAUVAIS",
+            Z: "❄️ RAZMO TIER",
+        },
+        categories: {
+            combat: "⚔️ Combat",
+            farm: "🌾 Farm",
+            lane: "🥊 Lane",
+            vision: "👁️ Vision",
+            objectives: "🏰 Objectifs",
+        },
+        metrics: {
+            kda: "KDA",
+            kill_participation: "Participation kills",
+            damage_share: "Part des dégâts",
+            solo_kills: "Solo kills",
+            cs_per_min: "CS/min",
+            cs_10: "CS à 10 min",
+            vision_per_min: "Vision/min",
+            control_wards: "Pinks achetées",
+            wards_killed: "Wards détruites",
+            turret_takedowns: "Tours détruites",
+            team_grubs: "Void grubs (équipe)",
+            team_heralds: "Héraut (équipe)",
+            early_dragons: "2 premiers dragons",
+            gold_diff_15: "Gold diff à 15 min",
+            xp_diff_15: "XP diff à 15 min",
+            cs_diff_15: "CS diff à 15 min",
+            epic_monsters: "Dragons + Barons",
+        },
+        evolution: "{emoji} {diff} ({days}j)",
+
+        // Fiche de note d'un joueur
+        title: "🧮 Note de {riotId}",
+        serverRank: "🏅 **#{position}** / {total} au classement des notes du serveur",
+        evolutionLine: "📊 Évolution : {list}",
+        mainRole: ({ role, count }) => `🎭 Rôle principal : **${role}** (${count} game${count > 1 ? "s" : ""})`,
+        mainRoleUnknown: "🎭 Rôle principal : *inconnu (anciennes games sans stats détaillées)*",
+        gamesAnalyzed: ({ count }) => `🎯 ${count} ${plural(count, "game analysée", "games analysées")}`,
+        detailedGames: " ({count} avec stats détaillées)",
+        provisional: "⚠️ *Note provisoire : moins de {min} games, elle est ramenée vers 50 (note brute : {raw}/100)*",
+        performance: "🎮 Performance en jeu — {points}",
+        noData: "Aucune donnée",
+        statsDetail: "📊 Détail des stats",
+        target: "*(objectif {target})*",
+        results: "🏆 Résultats — {points}",
+        winrateLine: "Winrate **{winrate}%** ({wins}W-{losses}L) → {points}",
+        avgLpLine: "LP moyen **{lp}**/game → {points}",
+        form: "🔥 Forme — {points}",
+        formWinrate: "**{winrate}%** sur les {count} dernières",
+        noStreak: "➖ Pas de série",
+
+        // Détail de la note d'une game
+        gameTitle: "🧮 Note de la game — {score}/100 ({grade})",
+        gameExplanation: "*Chaque stat rapporte des points entre son min (0%) et son objectif (100%).*",
+        heraldTaken: "Pris",
+        heraldNotTaken: "Non pris",
+        heraldScale: "barème : pris = 100%",
+        scale: "barème {min} → {target}",
+        notCounted: "{label} — non comptée",
+        laneUnavailable: "*Stats à 15 min indisponibles (game < 15 min ou timeline manquante)*",
+        dataUnavailable: "*Données indisponibles pour cette game*",
+        metricUnavailable: "*non disponible*",
+        pointsLostOn: "📉 **Points perdus surtout sur :** {list}",
+        almostAll: "🌟 **Presque tous les points obtenus !**",
+        totalWithMalus: "🧾 Total : {raw}/100 × {multiplier} (malus {role}) = **{score}/100**",
+        total: "🧾 Total : **{score}/100**",
+        summary: "📌 Résumé",
+    },
+
+    // ─── Notifications de match ───────────────────────────────────────────────
+    match: {
+        victory: "🟢 VICTOIRE",
+        defeat: "🔴 DÉFAITE",
+        remake: "⚪ REMAKE",
+        remakeDescription: "{player} vient de faire un remake !",
+        finishedDescription: "{player} vient de finir une partie !",
+        notCounted: "*Cette partie ne compte pas dans les statistiques.*",
+        duoWith: "👥 En duo avec {names}",
+        against: "⚔️ Contre {names}",
+        pentakill: "🔥 **PENTAKILL x{count}** 🔥",
+        quadrakill: "⚡ **QUADRA KILL x{count}**",
+        performance: "🎯 Performance",
+        championLevel: "🏆 {champion} (Niv.{level})",
+        lpChange: "📊 LP Change",
+        duration: "⏱️ Durée",
+        minutes: "{n}min",
+        gameScore: "🧮 Note de la game",
+        serverRank: "🏅 Classement serveur",
+        detailedStats: "📊 Stats détaillées",
+        duoQ: "👥 DuoQ",
+        groupOf: "👥 Groupe de {count}",
+        and: "&",
+        groupRemake: "👥 {names} ont fait un remake ensemble.",
+        groupFaceOff: "⚔️ {names} se sont affrontés !",
+        damage: "{damage} dégâts",
+        flexRemake: "⚪ REMAKE EN FLEX",
+        flexFaceOff: "⚔️ FACE-À-FACE EN FLEX",
+        flexVictory: "🟢 VICTOIRE EN FLEX",
+        flexDefeat: "🔴 DÉFAITE EN FLEX",
+        trackedPlayers: "👥 {count} joueurs suivis",
+        teamVictory: "🟢 Victoire",
+        teamDefeat: "🔴 Défaite",
+        teamRemake: "⚪ Remake",
+        promotion: "📈 PROMOTION !",
+        demotion: "📉 RÉTROGRADATION",
+        rankChanged: "**{riotId}** a changé de rang !",
+        oldRank: "Ancien rang",
+        newRank: "Nouveau rang",
+        renameTitle: "✏️ CHANGEMENT DE PSEUDO",
+        renameDescription: "**{oldRiotId}** s'appelle désormais [**{newRiotId}**]({url}) !",
+    },
+
+    detailedStats: {
+        title: "📊 Stats détaillées de la partie",
+        allies: "🟦 Équipe alliée",
+        enemies: "🟥 Équipe ennemie",
+        versus: "⚖️ Toi vs {champion}",
+        footer: "Durée : {minutes}min",
+        requestedBy: " • Demandé par {user}",
+        damageShort: "dmg",
+        gold: "💰 Gold",
+        goldDiff15: "⏱️ Gold diff @15",
+        damage: "💥 Dégâts",
+        vision: "👁️ Vision",
+        csDiff15Jungle: "🌿 CS diff @15",
+        csDiff15: "📈 CS diff @15",
+        csTotal: "🗺️ CS total",
+        assists15: "🛡️ Assists @15",
+        soloKills: "🗡️ Solo kills",
+    },
+
+    // ─── Récap hebdomadaire ───────────────────────────────────────────────────
+    recap: {
+        title: "🏆 RÉCAP HEBDOMADAIRE",
+        week: "📅 **Semaine du {start} au {end}**",
+        players: "📈 **LES JOUEURS DE LA SEMAINE :**",
+        games: "🎮 **{count} games** ({wins}W • {losses}L - {winrate}% WR)",
+        rating: "🧮 **Note :** {score}/100 ({grade}){diff}",
+        ratingUp: " • 📈 +{diff} cette semaine",
+        ratingDown: " • 📉 {diff} cette semaine",
+        ratingStable: " • ➖ stable",
+        favoriteChampion: "🦹 **Champion favori :** {champion} ({games} games - {winrate}% WR)",
+        avgKda: "⚔️ **KDA moyen :** {kda}",
+        globalStats: "📊 **STATS GLOBALES**",
+        totalGames: "• Total games : {games} • Groupe WR : {winrate}%",
+        groupLp: "• LP net du groupe : {lp} LP",
+        tooManyPlayers: "*... (trop de joueurs pour afficher tout)*",
+        footer: "Récap généré le {date}",
+    },
+
+    // ─── Propriétaire du bot ──────────────────────────────────────────────────
+    owner: {
+        apiDown: "**API RIOT DOWN** - La clé API ne fonctionne plus !",
+    },
+};

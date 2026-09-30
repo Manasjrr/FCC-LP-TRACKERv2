@@ -8,21 +8,21 @@ function getPlayerMatches(playerId, limit = 20) {
 }
 
 
-// Fonction pour formater le temps
-function getTimeAgo(timestamp) {
+// Fonction pour formater le temps (tr = traducteur i18n)
+function getTimeAgo(timestamp, tr) {
     const now = Date.now();
     const diffMs = now - timestamp;
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
     const diffHours = Math.floor(diffMinutes / 60);
     const diffDays = Math.floor(diffHours / 24);
 
-    if (diffMinutes < 60) return `il y a ${diffMinutes}min`;
-    if (diffHours < 24) return `il y a ${diffHours}h`;
-    return `il y a ${diffDays}j`;
+    if (diffMinutes < 60) return tr("history.minutesAgo", { n: diffMinutes });
+    if (diffHours < 24) return tr("history.hoursAgo", { n: diffHours });
+    return tr("history.daysAgo", { n: diffDays });
 }
 
 // Fonction pour créer l'embed avec couleurs dynamiques
-function createHistoryEmbedWithColors(player, matches, requestedCount) {
+function createHistoryEmbedWithColors(player, matches, requestedCount, tr) {
     // LES REMAKES SONT AFFICHÉS MAIS NE COMPTENT PAS DANS LES STATS
     const countedMatches = matches.filter(m => !m.is_remake);
     const remakeCount = matches.length - countedMatches.length;
@@ -41,12 +41,12 @@ function createHistoryEmbedWithColors(player, matches, requestedCount) {
 
     const embed = new EmbedBuilder()
         .setColor(embedColor)
-        .setTitle(`📜 Historique de ${player.riot_id}`)
-        .setDescription(`**${matches.length} dernier${matches.length > 1 ? 's' : ''} match${matches.length > 1 ? 's' : ''}** ${requestedCount > matches.length ? '(maximum disponible)' : ''}`);
+        .setTitle(tr("history.title", { riotId: player.riot_id }))
+        .setDescription(`${tr("history.lastMatches", { count: matches.length })} ${requestedCount > matches.length ? tr("history.maxAvailable") : ''}`);
 
     const lines = matches.map(match => {
         const kda = `${match.kills}/${match.deaths}/${match.assists}`;
-        const timeAgo = getTimeAgo(match.game_creation);
+        const timeAgo = getTimeAgo(match.game_creation, tr);
 
         if (match.is_remake) {
             return `⚪ **${match.champion_name}** ${kda} \`Remake\` • ${timeAgo}`;
@@ -76,14 +76,14 @@ function createHistoryEmbedWithColors(player, matches, requestedCount) {
 
     chunks.forEach((chunk, i) => {
         embed.addFields({
-            name: i === 0 ? '🎮 Historique des matchs' : '​',
+            name: i === 0 ? tr("history.fieldTitle") : '​',
             value: chunk,
             inline: false
         });
     });
 
     if (!chunks.length) {
-        embed.addFields({ name: '🎮 Historique des matchs', value: 'Aucun match trouvé', inline: false });
+        embed.addFields({ name: tr("history.fieldTitle"), value: tr("history.noMatchesFound"), inline: false });
     }
 
     // STATS FINALES DANS UN FIELD AU LIEU DU FOOTER
@@ -97,10 +97,14 @@ function createHistoryEmbedWithColors(player, matches, requestedCount) {
     const avgKDA = totalDeaths > 0 ? ((totalKills + totalAssists) / totalDeaths).toFixed(2) : '∞';
 
     // FIELD POUR LES STATS AVEC ÉMOJIS
-    const remakeText = remakeCount > 0 ? `\n⚪ **Remake${remakeCount > 1 ? 's' : ''}:** ${remakeCount} (non comptabilisé${remakeCount > 1 ? 's' : ''})` : '';
+    const remakeText = remakeCount > 0 ? `\n${tr("history.remakes", { count: remakeCount })}` : '';
     embed.addFields({
-        name: '📊 Statistiques globales',
-        value: `⚔️ **KDA moyen:** ${avgKDA}\n${lpEmoji} **LP total:** ${lpText}\n🎯 **Winrate:** ${wins}W-${countedMatches.length - wins}L (${winrate}%)${remakeText}`,
+        name: tr("history.statsTitle"),
+        value: [
+            tr("history.avgKda", { kda: avgKDA }),
+            tr("history.totalLp", { emoji: lpEmoji, lp: lpText }),
+            tr("history.winrate", { wins, losses: countedMatches.length - wins, winrate }),
+        ].join("\n") + remakeText,
         inline: true
     });
 

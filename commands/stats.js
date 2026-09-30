@@ -10,7 +10,8 @@ const logger = require("../utils/loggers");
 const { getSummonerByPuuid, getSoloQData, getChampionMasteries } = require("../services/riotApiService");
 const { getPatchVersion } = require("../services/monitoringService");
 const { getChampionIdByName } = require("../utils/championUtils");
-const { computePlayerRating, getRatingEvolution, formatEvolution, ROLE_LABELS } = require("../utils/ratingUtils");
+const { computePlayerRating, getRatingEvolution, formatEvolution, getTierLabel, getRoleLabel } = require("../utils/ratingUtils");
+const { DEFAULT_LANGUAGE, t, getTranslator } = require("../utils/i18n");
 const {
     getPlayerByRiotId,
     getServerPosition,
@@ -52,11 +53,11 @@ setInterval(() => {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("stats")
-        .setDescription("Statistiques détaillées d'un joueur avec analyse de performance")
+        .setDescription(t(DEFAULT_LANGUAGE, "commands.stats.description"))
         .addStringOption((option) =>
             option
-                .setName("joueur")
-                .setDescription("Riot ID du joueur")
+                .setName("player")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.stats.options.player.description"))
                 .setRequired(true)
                 .setAutocomplete(true)
         ),
@@ -68,7 +69,8 @@ module.exports = {
             return;
         }
 
-        const joueurOption = interaction.options.getString("joueur");
+        const tr = getTranslator(interaction.guildId);
+        const joueurOption = interaction.options.getString("player");
 
         logger.info('COMMAND', `/stats exécuté par ${interaction.user.tag}`, {
             guild: interaction.guildId,
@@ -77,16 +79,13 @@ module.exports = {
 
         if (!global.db) {
             logger.error('DB', `Base de données non disponible pour /stats`, { guild: interaction.guildId });
-            return interaction.editReply("❌ Base de données indisponible").catch(() => { });
+            return interaction.editReply(tr("common.dbUnavailable")).catch(() => { });
         }
 
         const targetPlayer = getPlayerByRiotId(joueurOption, interaction.guildId);
         if (!targetPlayer) {
             logger.warn('COMMAND', `Joueur "${joueurOption}" introuvable dans /stats`, { guild: interaction.guildId });
-            return interaction.editReply(
-                `❌ Aucun joueur trouvé pour **${joueurOption}** sur ce serveur.\n` +
-                `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
-            );
+            return interaction.editReply(tr("common.playerNotFound", { player: joueurOption }));
         }
 
         logger.info('COMMAND', `/stats → joueur ciblé : ${targetPlayer.riot_id}`, {
@@ -106,10 +105,11 @@ module.exports = {
                 playerStats,
                 matchAnalysis,
                 serverPosition,
-                interaction
+                interaction,
+                tr
             );
 
-            const actionRow = createInteractiveButtons(targetPlayer);
+            const actionRow = createInteractiveButtons(targetPlayer, tr);
 
             logger.success('COMMAND', `/stats affiché pour ${targetPlayer.riot_id}`, {
                 isLocal: playerStats.isLocal,
@@ -124,7 +124,7 @@ module.exports = {
                 error: error.message,
                 guild: interaction.guildId
             });
-            const fallbackEmbed = createLocalStatsEmbed(targetPlayer);
+            const fallbackEmbed = createLocalStatsEmbed(targetPlayer, tr);
             await interaction.editReply({ embeds: [fallbackEmbed] }).catch(() => { });
         }
     },
@@ -368,15 +368,15 @@ async function getChampionMastery(player) {
 // ─────────────────────────────────────────
 //  CONSTRUCTION DE L'EMBED
 // ─────────────────────────────────────────
-async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, interaction) {
+async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, interaction, tr) {
     const rankEmoji = getRankEmoji(stats.currentRank);
     const { rating } = analysis;
     const ratingText = rating.empty
-        ? "❔ Pas encore de note (aucune game)"
-        : `${rating.tier.label}\n🧮 **${rating.score}/100** (${rating.tier.grade})` +
-          (rating.mainRole !== "DEFAULT" ? ` • ${ROLE_LABELS[rating.mainRole]}` : "") +
-          (analysis.ratingEvolution ? ` • ${formatEvolution(analysis.ratingEvolution)}` : "") +
-          (rating.provisional ? " • *provisoire*" : "");
+        ? tr("stats.noRating")
+        : `${getTierLabel(rating.tier, tr)}\n🧮 **${rating.score}/100** (${rating.tier.grade})` +
+          (rating.mainRole !== "DEFAULT" ? ` • ${getRoleLabel(rating.mainRole, tr)}` : "") +
+          (analysis.ratingEvolution ? ` • ${formatEvolution(analysis.ratingEvolution, tr)}` : "") +
+          (rating.provisional ? ` • ${tr("stats.provisional")}` : "");
 
     const riotIdFormatted = formatRiotIdForUrl(player.riot_id);
     const links = [
@@ -387,28 +387,29 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
 
     const streakText =
         analysis.currentStreak > 0
-            ? `${analysis.streakType === "win" ? "🔥" : "💀"} ${analysis.currentStreak} ${analysis.streakType === "win" ? "victoires" : "défaites"
-            } consécutives`
-            : "➖ Aucune série en cours";
+            ? analysis.streakType === "win"
+                ? `🔥 ${tr("common.winsInARow", { count: analysis.currentStreak })}`
+                : `💀 ${tr("common.lossesInARow", { count: analysis.currentStreak })}`
+            : tr("stats.noStreak");
 
     const profileIconUrl = buildProfileIconUrl(stats.summoner?.profileIconId);
 
     const embed = new EmbedBuilder()
         .setTitle(`📊 ${player.riot_id}`)
-        .setDescription(`${links}\n*Analyse demandée par ${interaction.user.displayName}*`)
+        .setDescription(`${links}\n${tr("stats.requestedBy", { user: interaction.user.displayName })}`)
         .setColor(rating.tier.color)
         .setThumbnail(profileIconUrl)
         .addFields(
             {
-                name: "🏆 **RANG & PROGRESSION**",
+                name: tr("stats.rankTitle"),
                 value:
                     `${rankEmoji} **${stats.currentRank}** • **${stats.currentLP} LP**\n` +
                     `🎮 ${stats.wins}W/${stats.losses}L (**${stats.winrate}%** WR)\n` +
-                    `📈 ${analysis.lpChange >= 0 ? "+" : ""}${analysis.lpChange} LP (50 dernières)`,
+                    `📈 ${tr("stats.lpLast50", { lp: `${analysis.lpChange >= 0 ? "+" : ""}${analysis.lpChange}` })}`,
                 inline: true,
             },
             {
-                name: "⚡ **PERFORMANCE RÉCENTE**",
+                name: tr("stats.performanceTitle"),
                 value:
                     `${ratingText}\n` +
                     `${streakText}\n` +
@@ -416,10 +417,10 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
                 inline: true,
             },
             {
-                name: "🌐 **CLASSEMENT SERVEUR**",
+                name: tr("stats.serverTitle"),
                 value:
                     `🏅 **#${serverPos.position}** / ${serverPos.total}\n` +
-                    `🎯 ${analysis.totalGames} parties analysées`,
+                    tr("stats.gamesAnalyzed", { count: analysis.totalGames }),
                 inline: false,
             }
         );
@@ -433,7 +434,7 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
         const championsText = topChampions
             .map((champ, i) => {
                 const id = getChampionIdByName(champ.name);
-                const pts = (id && masteryData[id]) ? masteryData[id].toLocaleString() + " pts" : "0 pts";
+                const pts = `${((id && masteryData[id]) || 0).toLocaleString(tr.locale)} pts`;
                 const avgKDA = `${champ.avgKills}/${champ.avgDeaths}/${champ.avgAssists}`;
                 return (
                     `${medals[i] ?? "🏅"} **${champ.name}** • ${champ.games}G - ${champ.winrate}% WR • ${pts}\n` +
@@ -442,13 +443,13 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
             })
             .join("\n\n");
 
-        embed.addFields({ name: "🏆 CHAMPIONS RÉCENTS", value: championsText, inline: false });
+        embed.addFields({ name: tr("stats.championsTitle"), value: championsText, inline: false });
     }
 
     embed
         .setTimestamp()
         .setFooter({
-            text: `🔄 ${new Date().toLocaleTimeString("fr-FR")} • Cache 10 min`,
+            text: tr("stats.footer", { time: new Date().toLocaleTimeString(tr.locale) }),
             iconURL: interaction.client.user.displayAvatarURL(),
         });
 
@@ -458,23 +459,23 @@ async function createAdvancedStatsEmbed(player, stats, analysis, serverPos, inte
 // ─────────────────────────────────────────
 //  BOUTONS
 // ─────────────────────────────────────────
-function createInteractiveButtons(player) {
+function createInteractiveButtons(player, tr) {
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId("refresh_stats")
-            .setLabel("🔄 Actualiser")
+            .setLabel(tr("stats.buttons.refresh"))
             .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
             .setCustomId(`lp_chart_${player.id}`)
-            .setLabel("📈 Graphique LP")
+            .setLabel(tr("stats.buttons.lpChart"))
             .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
             .setCustomId(`match_history_${player.id}`)
-            .setLabel("📜 Match History")
+            .setLabel(tr("stats.buttons.history"))
             .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
             .setCustomId(`rating_info_${player.id}`)
-            .setLabel("🧮 Infos note")
+            .setLabel(tr("stats.buttons.ratingInfo"))
             .setStyle(ButtonStyle.Secondary)
     );
 }
@@ -482,18 +483,18 @@ function createInteractiveButtons(player) {
 // ─────────────────────────────────────────
 //  FALLBACK
 // ─────────────────────────────────────────
-function createLocalStatsEmbed(player) {
+function createLocalStatsEmbed(player, tr) {
     const rankEmoji = getRankEmoji(player.last_rank);
     return new EmbedBuilder()
         .setTitle(`📊 ${player.riot_id}`)
-        .setDescription("🔗 Données locales uniquement")
+        .setDescription(tr("stats.localData"))
         .setColor(0x666666)
         .addFields({
-            name: "🏆 **DERNIER RANG CONNU**",
+            name: tr("stats.lastKnownRank"),
             value:
                 `${rankEmoji} **${player.last_rank ?? "UNRANKED"}** • **${player.last_lp ?? 0} LP**\n` +
-                `⚠️ Données sauvegardées localement`,
+                tr("stats.savedLocally"),
             inline: false,
         })
-        .setFooter({ text: "API Riot indisponible – Réessaye plus tard" });
+        .setFooter({ text: tr("stats.apiUnavailable") });
 }

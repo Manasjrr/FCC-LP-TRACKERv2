@@ -9,6 +9,7 @@ const { getMatch, getTimeline } = require("../services/riotApiService");
 const { storeTimelineStats } = require("../services/matchService");
 const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
+const { getTranslator } = require("../utils/i18n");
 const logger = require("../utils/loggers");
 const axios = require("axios");
 const FormData = require("form-data");
@@ -76,52 +77,54 @@ async function handleAutocomplete(interaction) {
 async function handleButton(interaction) {
     if (interaction.replied || interaction.deferred) return;
 
+    const tr = getTranslator(interaction.guildId);
+
     try {
         const { customId } = interaction;
 
         // Graphique LP
         if (customId.startsWith("lp_chart_")) {
-            return await handleLPChart(interaction);
+            return await handleLPChart(interaction, tr);
         }
 
         // Historique matchs
         if (customId.startsWith("match_history_")) {
-            return await handleMatchHistoryButton(interaction);
+            return await handleMatchHistoryButton(interaction, tr);
         }
 
         // Stats détaillées
         if (customId.startsWith("stats|")) {
-            return await handleDetailedStats(interaction);
+            return await handleDetailedStats(interaction, tr);
         }
 
         // Partager stats
         if (customId.startsWith("share|")) {
-            return await handleShare(interaction);
+            return await handleShare(interaction, tr);
         }
 
         // Détail de la note de la game
         if (customId.startsWith("gamescore|")) {
-            return await handleGameScore(interaction);
+            return await handleGameScore(interaction, tr);
         }
 
         // Refresh
         if (customId === "refresh_stats") {
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
             return await interaction.followUp({
-                content: "🔄 **Cache actualisé !**\nRelance `/stats` pour voir les nouvelles données.",
+                content: tr("buttons.refreshed"),
                 flags: MessageFlags.Ephemeral,
             });
         }
 
         // Infos note
         if (customId.startsWith("rating_info_")) {
-            return await handleRatingInfo(interaction);
+            return await handleRatingInfo(interaction, tr);
         }
 
         // Inconnu
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         return await interaction.followUp({
-            content: `❓ Bouton non reconnu : ${customId}`,
+            content: tr("buttons.unknown", { id: customId }),
             flags: MessageFlags.Ephemeral,
         });
 
@@ -131,9 +134,9 @@ async function handleButton(interaction) {
         });
         try {
             if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ content: "❌ Erreur survenue", flags: MessageFlags.Ephemeral });
+                await interaction.reply({ content: tr("common.error"), flags: MessageFlags.Ephemeral });
             } else {
-                await interaction.followUp({ content: "❌ Erreur survenue", flags: MessageFlags.Ephemeral });
+                await interaction.followUp({ content: tr("common.error"), flags: MessageFlags.Ephemeral });
             }
         } catch (e) {
             logger.error("HANDLER", "Erreur finale bouton", { error: e.message });
@@ -142,19 +145,21 @@ async function handleButton(interaction) {
 }
 
 // ─── Graphique LP ─────────────────────────────────────────────────────────────
-async function handleLPChart(interaction) {
+async function handleLPChart(interaction, tr) {
     const playerId = interaction.customId.split("_")[2];
     await interaction.deferReply();
 
     try {
-        const imageBuffer = await generateLPGraph(playerId);
         const player = global.db.prepare(`SELECT * FROM players WHERE id = ?`).get(playerId);
+        if (!player) {
+            return interaction.editReply({ content: tr("common.playerNotFoundById", { id: playerId }) });
+        }
 
-        if (!player) throw new Error(`Joueur introuvable (id: ${playerId})`);
+        const imageBuffer = await generateLPGraph(playerId, undefined, { tr });
 
         const embed = new EmbedBuilder()
-            .setTitle("📊 Évolution du Rang")
-            .setDescription(`Graphique d'évolution pour **${player.riot_id}**`)
+            .setTitle(tr("buttons.lpChartTitle"))
+            .setDescription(tr("buttons.lpChartDescription", { riotId: player.riot_id }))
             .setImage("attachment://rank-evolution.jpg")
             .setColor(0x00ff88);
 
@@ -163,18 +168,18 @@ async function handleLPChart(interaction) {
 
     } catch (error) {
         logger.error("HANDLER", `Erreur graphique LP`, { error: error.message });
-        await interaction.editReply({ content: `❌ Erreur : ${error.message}` });
+        await interaction.editReply({ content: tr("common.errorWithMessage", { message: error.message }) });
     }
 }
 
 // ─── Infos note (détail + barème) ─────────────────────────────────────────────
-async function handleRatingInfo(interaction) {
+async function handleRatingInfo(interaction, tr) {
     const playerId = Number(interaction.customId.split("_")[2]);
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const player = getPlayerById(playerId);
     if (!player) {
-        return interaction.editReply({ content: `❌ Joueur introuvable (ID: ${playerId})` });
+        return interaction.editReply({ content: tr("common.playerNotFoundById", { id: playerId }) });
     }
 
     const ranking = getGuildRatingRanking(getGuildPlayers(interaction.guildId));
@@ -182,7 +187,7 @@ async function handleRatingInfo(interaction) {
     const rating = index >= 0 ? ranking[index].rating : computePlayerRating(playerId);
 
     if (rating.empty) {
-        return interaction.editReply({ content: `❔ **${player.riot_id}** n'a pas encore de game classée enregistrée.` });
+        return interaction.editReply({ content: tr("buttons.noRankedGame", { riotId: player.riot_id }) });
     }
 
     logger.info("HANDLER", `Infos note consultées par ${interaction.user.tag}`, {
@@ -196,21 +201,21 @@ async function handleRatingInfo(interaction) {
         .filter(Boolean);
 
     await interaction.editReply({
-        embeds: [buildRatingEmbed(player, rating, index >= 0 ? { position: index + 1, total: ranking.length } : null, evolutions)],
+        embeds: [buildRatingEmbed(player, rating, index >= 0 ? { position: index + 1, total: ranking.length } : null, evolutions, tr)],
     });
 }
 
 // ─── Bouton historique → ouvre le modal ──────────────────────────────────────
-async function handleMatchHistoryButton(interaction) {
+async function handleMatchHistoryButton(interaction, tr) {
     const playerId = interaction.customId.split("_")[2];
 
     const modal = new ModalBuilder()
         .setCustomId(`history_modal_${playerId}`)
-        .setTitle("📜 Historique des matchs");
+        .setTitle(tr("history.modalTitle"));
 
     const input = new TextInputBuilder()
         .setCustomId("match_count")
-        .setLabel("Nombre de matchs à afficher (1-25)")
+        .setLabel(tr("history.modalLabel"))
         .setStyle(TextInputStyle.Short)
         .setPlaceholder("5")
         .setValue("5")
@@ -223,7 +228,7 @@ async function handleMatchHistoryButton(interaction) {
 }
 
 // ─── Match + timeline (cache en priorité) → embed stats détaillées ───────────
-async function getDetailedStatsEmbed(matchId, puuid, userTag) {
+async function getDetailedStatsEmbed(matchId, puuid, userTag, tr) {
     let matchInfo = matchCache.getMatch(matchId);
 
     if (!matchInfo) {
@@ -249,11 +254,11 @@ async function getDetailedStatsEmbed(matchId, puuid, userTag) {
         }
     }
 
-    return buildDetailedStatsEmbed(matchInfo, puuid, timeline, userTag);
+    return buildDetailedStatsEmbed(matchInfo, puuid, timeline, userTag, tr);
 }
 
 // ─── Stats détaillées ─────────────────────────────────────────────────────────
-async function handleDetailedStats(interaction) {
+async function handleDetailedStats(interaction, tr) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const parts = interaction.customId.split("|");
@@ -267,14 +272,14 @@ async function handleDetailedStats(interaction) {
         channel: interaction.channelId,
     });
 
-    const embed = await getDetailedStatsEmbed(matchId, puuid, interaction.user.tag);
+    const embed = await getDetailedStatsEmbed(matchId, puuid, interaction.user.tag, tr);
     if (!embed) {
-        return interaction.editReply({ content: "❌ Les données du match sont introuvables." });
+        return interaction.editReply({ content: tr("buttons.matchDataNotFound") });
     }
 
     const shareButton = new ButtonBuilder()
         .setCustomId(`share|${matchId}|${puuid}`)
-        .setLabel("📢 Envoyer à tout le monde")
+        .setLabel(tr("buttons.share"))
         .setStyle(ButtonStyle.Primary);
 
     const row = new ActionRowBuilder().addComponents(shareButton);
@@ -291,7 +296,7 @@ async function handleDetailedStats(interaction) {
         row.addComponents(
             new ButtonBuilder()
                 .setCustomId(`gamescore|${matchRow.id}`)
-                .setLabel("🧮 Détail de la note")
+                .setLabel(tr("buttons.gameScore"))
                 .setStyle(ButtonStyle.Secondary)
         );
     }
@@ -300,7 +305,7 @@ async function handleDetailedStats(interaction) {
 }
 
 // ─── Détail de la note d'une game ─────────────────────────────────────────────
-async function handleGameScore(interaction) {
+async function handleGameScore(interaction, tr) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const matchRowId = Number(interaction.customId.split("|")[1]);
@@ -315,9 +320,7 @@ async function handleGameScore(interaction) {
     const details = getGameScoreDetails(match);
     if (!details) {
         return interaction.editReply({
-            content: match?.is_remake
-                ? "⚪ Pas de note pour un remake."
-                : "❌ Note indisponible pour cette game.",
+            content: tr(match?.is_remake ? "buttons.noRemakeScore" : "buttons.scoreUnavailable"),
         });
     }
 
@@ -327,20 +330,20 @@ async function handleGameScore(interaction) {
         score: details.score,
     });
 
-    await interaction.editReply({ embeds: [buildGameScoreEmbed(details, match, match.riot_id)] });
+    await interaction.editReply({ embeds: [buildGameScoreEmbed(details, match, match.riot_id, tr)] });
 }
 
 // ─── Partager ─────────────────────────────────────────────────────────────────
-async function handleShare(interaction) {
+async function handleShare(interaction, tr) {
     await interaction.deferReply();
 
     const parts = interaction.customId.split("|");
     const matchId = parts[1];
     const puuid = parts[2];
 
-    const embed = await getDetailedStatsEmbed(matchId, puuid, interaction.user.tag);
+    const embed = await getDetailedStatsEmbed(matchId, puuid, interaction.user.tag, tr);
     if (!embed) {
-        return interaction.editReply({ content: "❌ Les données du match sont introuvables." });
+        return interaction.editReply({ content: tr("buttons.matchDataNotFound") });
     }
     await interaction.editReply({ embeds: [embed] });
 }
@@ -348,6 +351,8 @@ async function handleShare(interaction) {
 // ─── Modal historique ─────────────────────────────────────────────────────────
 async function handleModal(interaction) {
     if (!interaction.customId.startsWith("history_modal_")) return;
+
+    const tr = getTranslator(interaction.guildId);
 
     const playerId = interaction.customId.split("_")[2];
     let matchCount = parseInt(interaction.fields.getTextInputValue("match_count")) || 5;
@@ -357,7 +362,7 @@ async function handleModal(interaction) {
         isOverLimit = true;
         matchCount = 25;
         await interaction.reply({
-            content: `⚠️ Limite dépassée ! Affichage de **25 matchs** maximum.`,
+            content: tr("history.overLimit"),
             flags: MessageFlags.Ephemeral,
         });
     } else {
@@ -368,7 +373,7 @@ async function handleModal(interaction) {
     try {
         const player = getPlayerById(playerId);
         if (!player) {
-            const content = `❌ Joueur introuvable (ID: ${playerId})`;
+            const content = tr("common.playerNotFoundById", { id: playerId });
             return isOverLimit
                 ? interaction.followUp({ content, flags: MessageFlags.Ephemeral })
                 : interaction.editReply(content);
@@ -376,13 +381,13 @@ async function handleModal(interaction) {
 
         const matches = getPlayerMatches(playerId, matchCount);
         if (!matches.length) {
-            const content = "❌ Aucun match trouvé.";
+            const content = tr("history.noMatches");
             return isOverLimit
                 ? interaction.followUp({ content, flags: MessageFlags.Ephemeral })
                 : interaction.editReply(content);
         }
 
-        const embed = createHistoryEmbedWithColors(player, matches, matchCount);
+        const embed = createHistoryEmbedWithColors(player, matches, matchCount, tr);
         const replyData = { embeds: [embed] };
 
         return isOverLimit
@@ -391,7 +396,7 @@ async function handleModal(interaction) {
 
     } catch (error) {
         logger.error("HANDLER", `Erreur modal historique`, { error: error.message });
-        const content = "❌ Erreur lors de la récupération de l'historique.";
+        const content = tr("history.error");
         try {
             if (interaction.replied) {
                 await interaction.followUp({ content, flags: MessageFlags.Ephemeral });

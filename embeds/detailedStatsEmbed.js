@@ -1,6 +1,7 @@
 const { EmbedBuilder } = require("discord.js");
 
-function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
+// tr = traducteur i18n (langue du serveur)
+function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag, tr) {
     const participants = matchInfo.participants;
     const player = participants.find((p) => p.puuid === puuid);
     const allyTeamId = player.teamId;
@@ -9,7 +10,7 @@ function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
     const opponent = enemies.find((p) => p.teamPosition === player.teamPosition) || enemies[0];
     const role = player.teamPosition;
 
-    const fmt = (n) => n?.toLocaleString("fr-FR") ?? "N/A";
+    const fmt = (n) => n?.toLocaleString(tr.locale) ?? "N/A";
     const diff = (a, b) => {
         const d = a - b;
         return d > 0 ? `+${fmt(d)}` : `${fmt(d)}`;
@@ -28,7 +29,7 @@ function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
         const r = roleEmoji[p.teamPosition] || "❓";
         const cs = p.totalMinionsKilled + p.neutralMinionsKilled;
         const highlight = p.puuid === puuid ? "▶ " : "   ";
-        return `${highlight}${r} **${p.championName}** ${p.kills}/${p.deaths}/${p.assists} | ${fmt(cs)} CS | ${fmt(p.totalDamageDealtToChampions)} dmg`;
+        return `${highlight}${r} **${p.championName}** ${p.kills}/${p.deaths}/${p.assists} | ${fmt(cs)} CS | ${fmt(p.totalDamageDealtToChampions)} ${tr("detailedStats.damageShort")}`;
     };
 
     const alliesText = allies.map(playerLine).join("\n");
@@ -76,52 +77,56 @@ function buildDetailedStatsEmbed(matchInfo, puuid, timeline = null, userTag) {
     // ── Stats selon le rôle ───────────────────────────────────────────────────
     const stats = [];
 
-    stats.push(`💰 Gold : ${arrow(player.goldEarned, opponent.goldEarned)} **${diff(player.goldEarned, opponent.goldEarned)}**`);
+    const label = (key) => tr(`detailedStats.${key}`);
+    const signedDiff = (d) => `${d > 0 ? "+" : ""}${fmt(d)}`;
+
+    stats.push(`${label("gold")} : ${arrow(player.goldEarned, opponent.goldEarned)} **${diff(player.goldEarned, opponent.goldEarned)}**`);
     stats.push(
         goldDiff15 !== null
-            ? `⏱️ Gold diff @15 : ${arrow(goldDiff15, 0)} **${goldDiff15 > 0 ? "+" : ""}${fmt(goldDiff15)}**`
-            : `⏱️ Gold diff @15 : ⚪ **N/A**`
+            ? `${label("goldDiff15")} : ${arrow(goldDiff15, 0)} **${signedDiff(goldDiff15)}**`
+            : `${label("goldDiff15")} : ⚪ **N/A**`
     );
-    stats.push(`💥 Dégâts : ${arrow(player.totalDamageDealtToChampions, opponent.totalDamageDealtToChampions)} **${diff(player.totalDamageDealtToChampions, opponent.totalDamageDealtToChampions)}**`);
-    stats.push(`👁️ Vision : ${arrow(player.visionScore, opponent.visionScore)} **${diff(player.visionScore, opponent.visionScore)}** (${player.visionScore} vs ${opponent.visionScore})`);
+    stats.push(`${label("damage")} : ${arrow(player.totalDamageDealtToChampions, opponent.totalDamageDealtToChampions)} **${diff(player.totalDamageDealtToChampions, opponent.totalDamageDealtToChampions)}**`);
+    stats.push(`${label("vision")} : ${arrow(player.visionScore, opponent.visionScore)} **${diff(player.visionScore, opponent.visionScore)}** (${player.visionScore} vs ${opponent.visionScore})`);
 
     if (role === "JUNGLE") {
         stats.push(
             csDiff15 !== null
-                ? `🌿 CS diff @15 : ${arrow(csDiff15, 0)} **${csDiff15 > 0 ? "+" : ""}${fmt(csDiff15)}**`
-                : `🌿 CS diff @15 : ⚪ **N/A**`
+                ? `${label("csDiff15Jungle")} : ${arrow(csDiff15, 0)} **${signedDiff(csDiff15)}**`
+                : `${label("csDiff15Jungle")} : ⚪ **N/A**`
         );
-        stats.push(`🗺️ CS total : ${arrow(playerCs, opponentCs)} **${diff(playerCs, opponentCs)}**`);
+        stats.push(`${label("csTotal")} : ${arrow(playerCs, opponentCs)} **${diff(playerCs, opponentCs)}**`);
     } else if (role === "UTILITY") {
         stats.push(
             playerAssists15 !== null
-                ? `🛡️ Assists @15 : ${arrow(playerAssists15, opponentAssists15)} **${playerAssists15}** vs **${opponentAssists15}**`
-                : `🛡️ Assists @15 : ⚪ **N/A**`
+                ? `${label("assists15")} : ${arrow(playerAssists15, opponentAssists15)} **${playerAssists15}** vs **${opponentAssists15}**`
+                : `${label("assists15")} : ⚪ **N/A**`
         );
     } else {
-        stats.push(`🗺️ CS total : ${arrow(playerCs, opponentCs)} **${diff(playerCs, opponentCs)}**`);
+        stats.push(`${label("csTotal")} : ${arrow(playerCs, opponentCs)} **${diff(playerCs, opponentCs)}**`);
         stats.push(
             csDiff15 !== null
-                ? `📈 CS diff @15 : ${arrow(csDiff15, 0)} **${csDiff15 > 0 ? "+" : ""}${fmt(csDiff15)}**`
-                : `📈 CS diff @15 : ⚪ **N/A**`
+                ? `${label("csDiff15")} : ${arrow(csDiff15, 0)} **${signedDiff(csDiff15)}**`
+                : `${label("csDiff15")} : ⚪ **N/A**`
         );
         if (role === "TOP" || role === "MIDDLE") {
             const pSolo = player.challenges?.soloKills ?? 0;
             const oSolo = opponent.challenges?.soloKills ?? 0;
-            stats.push(`🗡️ Solo kills : ${arrow(pSolo, oSolo)} **${pSolo}** vs **${oSolo}**`);
+            stats.push(`${label("soloKills")} : ${arrow(pSolo, oSolo)} **${pSolo}** vs **${oSolo}**`);
         }
     }
 
     return new EmbedBuilder()
-        .setTitle("📊 Stats détaillées de la partie")
+        .setTitle(label("title"))
         .setColor(player.win ? 0x00ff00 : 0xff0000)
         .addFields(
-            { name: "🟦 Équipe alliée", value: alliesText || "N/A", inline: false },
-            { name: "🟥 Équipe ennemie", value: enemiesText || "N/A", inline: false },
-            { name: `⚖️ Toi vs ${opponent.championName}`, value: stats.join("\n"), inline: false }
+            { name: label("allies"), value: alliesText || "N/A", inline: false },
+            { name: label("enemies"), value: enemiesText || "N/A", inline: false },
+            { name: tr("detailedStats.versus", { champion: opponent.championName }), value: stats.join("\n"), inline: false }
         )
         .setFooter({
-            text: `Durée : ${Math.floor(matchInfo.gameDuration / 60)}min${userTag ? ` • Demandé par ${userTag}` : ""}`,
+            text: tr("detailedStats.footer", { minutes: Math.floor(matchInfo.gameDuration / 60) }) +
+                (userTag ? tr("detailedStats.requestedBy", { user: userTag }) : ""),
         })
         .setTimestamp();
 }

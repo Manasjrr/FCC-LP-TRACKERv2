@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { Collection, REST, Routes } = require("discord.js");
+const { getGuildLanguage, localizeCommandData } = require("../utils/i18n");
 const logger = require("../utils/loggers");
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -37,6 +38,12 @@ function loadCommands(client) {
     }
 
     logger.success("HANDLER", `${client.commands.size} commande(s) chargée(s)`);
+}
+
+// Définitions des commandes dans la langue du serveur
+function getGuildCommands(client, guildId) {
+    const lang = getGuildLanguage(guildId);
+    return [...client.commands.values()].map((c) => localizeCommandData(c.data.toJSON(), lang));
 }
 
 // ─── Déploiement sur un serveur ───────────────────────────────────────────────
@@ -77,38 +84,27 @@ async function deployToGuild(rest, guildId, guildName, commands) {
     if (!success) {
         logger.error("HANDLER", `Échec total du déploiement sur ${guildName}`);
     }
+    return success;
 }
 
 // ─── Déploiement sur tous les serveurs ───────────────────────────────────────
 async function deployCommands(client) {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
-    const commands = [...client.commands.values()].map((c) => c.data.toJSON());
 
     logger.info("HANDLER", `Déploiement sur ${client.guilds.cache.size} serveur(s)...`);
 
     for (const [guildId, guild] of client.guilds.cache) {
-        await deployToGuild(rest, guildId, guild.name, commands);
+        await deployToGuild(rest, guildId, guild.name, getGuildCommands(client, guildId));
         await new Promise((r) => setTimeout(r, 2000));
     }
 
     logger.success("HANDLER", "Déploiement terminé !");
 }
 
-// ─── Déploiement sur un nouveau serveur ──────────────────────────────────────
-async function deployToNewGuild(client, guild) {
+// ─── Déploiement sur un seul serveur (nouveau serveur, changement de langue) ─
+async function deployToSingleGuild(client, guild) {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
-    const commands = [...client.commands.values()].map((c) => c.data.toJSON());
-
-    try {
-        await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guild.id), {
-            body: commands,
-        });
-        logger.success("HANDLER", `Commandes déployées sur le nouveau serveur : ${guild.name}`);
-    } catch (error) {
-        logger.error("HANDLER", `Erreur déploiement sur ${guild.name}`, {
-            error: error.message,
-        });
-    }
+    return deployToGuild(rest, guild.id, guild.name, getGuildCommands(client, guild.id));
 }
 
-module.exports = { loadCommands, deployCommands, deployToNewGuild };
+module.exports = { loadCommands, deployCommands, deployToSingleGuild };

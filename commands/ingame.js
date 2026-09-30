@@ -4,6 +4,7 @@ const { getRankEmoji } = require("../utils/rankUtils");
 const { getChampionName } = require("../utils/championUtils");
 const logger = require("../utils/loggers");
 const { getGuildPlayers, getDpmUrl } = require("../utils/playerUtils");
+const { DEFAULT_LANGUAGE, t, getTranslator } = require("../utils/i18n");
 
 // ─── Maps utilitaires ─────────────────────────────────────────────────────────
 const QUEUE_NAMES = {
@@ -381,7 +382,7 @@ async function processBatch(players, batchSize = 3, delayMs = 200) {
 }
 
 // ─── Stats récentes + série depuis la BDD ────────────────────────────────────
-function getPlayerRecentStats(playerId) {
+function getPlayerRecentStats(playerId, tr) {
     const matches = global.db.prepare(`
         SELECT win FROM match_history
         WHERE player_id = ? AND is_remake = 0
@@ -393,7 +394,7 @@ function getPlayerRecentStats(playerId) {
 
     const total = matches.length;
     const wins = matches.filter((m) => m.win).length;
-    const wrLine = `📊 **${Math.round((wins / total) * 100)}%** WR (${wins}V ${total - wins}D)`;
+    const wrLine = tr("ingame.winrateLine", { winrate: Math.round((wins / total) * 100), wins, losses: total - wins });
 
     let streakLine = null;
     if (matches.length >= 2) {
@@ -405,8 +406,8 @@ function getPlayerRecentStats(playerId) {
         }
         if (count >= 2) {
             streakLine = first
-                ? `🔥 ${count} victoires d'affilée`
-                : `💀 ${count} défaites d'affilée`;
+                ? `🔥 ${tr("common.winsInARow", { count })}`
+                : `💀 ${tr("common.lossesInARow", { count })}`;
         }
     }
 
@@ -414,20 +415,7 @@ function getPlayerRecentStats(playerId) {
 }
 
 // ─── Affichage par partie ─────────────────────────────────────────────────────
-const ROLE_LABELS = {
-    TOP: "Top",
-    JUNGLE: "Jungle",
-    MID: "Mid",
-    ADC: "ADC",
-    SUPPORT: "Support",
-    NONE: "Rôle inconnu",
-};
-
-const TEAM_LABELS = {
-    100: "🔵 Côté bleu",
-    200: "🔴 Côté rouge",
-};
-
+// Libellés des rôles / équipes : locales → ingame.roles / ingame.teams
 const GAME_COLORS = {
     solo: 0x00bfff,
     group: 0x2ecc71,
@@ -468,13 +456,13 @@ function groupByGame(inGame, playersByPuuid) {
 }
 
 // Lignes d'un joueur (sans son nom)
-function buildPlayerLines({ player, participant, role }) {
+function buildPlayerLines({ player, participant, role }, tr) {
     const roleEmoji = ROLE_EMOJIS[role] ?? ROLE_EMOJIS.NONE;
     const championName = getChampionName(participant.championId);
-    const { wrLine, streakLine } = getPlayerRecentStats(player.id);
+    const { wrLine, streakLine } = getPlayerRecentStats(player.id, tr);
 
     const lines = [
-        `${roleEmoji} **${championName}** · ${ROLE_LABELS[role] ?? ROLE_LABELS.NONE}`,
+        `${roleEmoji} **${championName}** · ${tr(`ingame.roles.${ROLE_EMOJIS[role] ? role : "NONE"}`)}`,
         `${getRankEmoji(player.last_rank)} ${player.last_rank || "UNRANKED"} · ${player.last_lp ?? 0} LP`,
     ];
     const statsLine = [wrLine, streakLine].filter(Boolean).join(" · ");
@@ -483,11 +471,11 @@ function buildPlayerLines({ player, participant, role }) {
     return lines;
 }
 
-function buildGameEmbed({ gameData, members }) {
-    const queueName = QUEUE_NAMES[gameData.gameQueueConfigId] ?? `Queue ${gameData.gameQueueConfigId}`;
+function buildGameEmbed({ gameData, members }, tr) {
+    const queueName = QUEUE_NAMES[gameData.gameQueueConfigId] ?? tr("ingame.queue", { id: gameData.gameQueueConfigId });
     const rawSeconds = Math.max(0, Math.floor(gameData.gameLength ?? 0));
     const durationLabel = rawSeconds < 60
-        ? "🔜 En chargement..."
+        ? tr("ingame.loading")
         : `⏱️ ${formatDuration(rawSeconds)}`;
 
     const teams = new Map();
@@ -500,12 +488,12 @@ function buildGameEmbed({ gameData, members }) {
     let title;
     if (teams.size > 1) {
         kind = "versus";
-        title = `⚔️ Face-à-face en ${queueName}`;
+        title = tr("ingame.versusTitle", { queue: queueName });
     } else if (members.length > 1) {
         kind = "group";
         title = members.length === 2
-            ? `🤝 Duo Q `
-            : `👥 Groupe de ${members.length} en ${queueName}`;
+            ? tr("ingame.duoTitle")
+            : tr("ingame.groupTitle", { count: members.length, queue: queueName });
     } else {
         kind = "solo";
         title = `🎮 ${members[0].player.riot_id}`;
@@ -521,7 +509,7 @@ function buildGameEmbed({ gameData, members }) {
             .setURL(getDpmUrl(member.player.riot_id))
             .setDescription([
                 `🎯 **${queueName}** · ${durationLabel}`,
-                ...buildPlayerLines(member),
+                ...buildPlayerLines(member, tr),
             ].join("\n"));
     } else if (kind === "group") {
         embed.setDescription(durationLabel);
@@ -529,7 +517,7 @@ function buildGameEmbed({ gameData, members }) {
             embed.addFields({
                 name: member.player.riot_id,
                 value: truncate(
-                    [...buildPlayerLines(member), `🔗 [DPM](${getDpmUrl(member.player.riot_id)})`].join("\n"),
+                    [...buildPlayerLines(member, tr), `🔗 [DPM](${getDpmUrl(member.player.riot_id)})`].join("\n"),
                     FIELD_VALUE_MAX
                 ),
                 inline: false,
@@ -542,10 +530,10 @@ function buildGameEmbed({ gameData, members }) {
             const teamMembers = teams.get(teamId);
             if (!teamMembers) continue;
             const blocks = teamMembers.map((m) =>
-                [`**[${m.player.riot_id}](${getDpmUrl(m.player.riot_id)})**`, ...buildPlayerLines(m)].join("\n")
+                [`**[${m.player.riot_id}](${getDpmUrl(m.player.riot_id)})**`, ...buildPlayerLines(m, tr)].join("\n")
             );
             embed.addFields({
-                name: TEAM_LABELS[teamId],
+                name: tr(`ingame.teams.${teamId}`),
                 value: truncate(blocks.join("\n\n"), FIELD_VALUE_MAX),
                 inline: true,
             });
@@ -568,10 +556,12 @@ function buildGameEmbed({ gameData, members }) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("ingame")
-        .setDescription("Affiche les joueurs surveillés actuellement en partie (SoloQ / Flex)"),
+        .setDescription(t(DEFAULT_LANGUAGE, "commands.ingame.description")),
 
     async execute(interaction) {
         await interaction.deferReply();
+
+        const tr = getTranslator(interaction.guildId);
 
         logger.info("INGAME", `/ingame exécuté par ${interaction.user.tag}`, {
             guild: interaction.guildId,
@@ -581,7 +571,7 @@ module.exports = {
         const players = getGuildPlayers(interaction.guildId);
 
         if (!players?.length) {
-            return interaction.editReply("📭 Aucun compte surveillé sur ce serveur.");
+            return interaction.editReply(tr("common.noTrackedAccounts"));
         }
 
         logger.info("INGAME", `${players.length} joueur(s) à vérifier`, {
@@ -589,9 +579,7 @@ module.exports = {
         });
 
         if (players.length > 4) {
-            await interaction.editReply(
-                `🔍 Vérification de ${players.length} joueur(s) en cours...`
-            );
+            await interaction.editReply(tr("ingame.checking", { count: players.length }));
         }
 
         // ── Appels API en parallèle par batch (plus rapide que le séquentiel) ─
@@ -631,12 +619,13 @@ module.exports = {
 
         if (!inGame.length) {
             const embed = new EmbedBuilder()
-                .setTitle("🎮 Joueurs en partie")
-                .setDescription("😴 Aucun joueur surveillé n'est actuellement en SoloQ ou Flex.")
+                .setTitle(tr("ingame.noneTitle"))
+                .setDescription(tr("ingame.noneDescription"))
                 .setColor(0x808080)
                 .setTimestamp()
                 .setFooter({
-                    text: `${players.length} joueur(s) vérifié(s)${rejected.length > 0 ? ` · ⚠️ ${rejected.length} erreur(s) API` : ""}`,
+                    text: tr("ingame.playersChecked", { count: players.length }) +
+                        (rejected.length > 0 ? ` · ${tr("ingame.apiErrors", { count: rejected.length })}` : ""),
                 });
 
             return interaction.editReply({ content: null, embeds: [embed] });
@@ -651,7 +640,7 @@ module.exports = {
         let totalChars = 0;
         for (const game of games) {
             if (embeds.length >= MESSAGE_EMBEDS_MAX) break;
-            const embed = buildGameEmbed(game);
+            const embed = buildGameEmbed(game, tr);
             const size = JSON.stringify(embed.toJSON()).length;
             if (totalChars + size > MESSAGE_CHARS_MAX) break;
             totalChars += size;
@@ -659,16 +648,16 @@ module.exports = {
         }
 
         const hiddenGames = games.length - embeds.length;
-        const footerParts = [`${inGameCount}/${players.length} joueur(s) en game`];
-        if (hiddenGames > 0) footerParts.push(`${hiddenGames} partie(s) non affichée(s)`);
-        if (rejected.length > 0) footerParts.push(`⚠️ ${rejected.length} erreur(s) API`);
+        const footerParts = [tr("ingame.inGameCount", { count: inGameCount, total: players.length })];
+        if (hiddenGames > 0) footerParts.push(tr("ingame.hiddenGames", { count: hiddenGames }));
+        if (rejected.length > 0) footerParts.push(tr("ingame.apiErrors", { count: rejected.length }));
 
         embeds[embeds.length - 1]
             .setTimestamp()
             .setFooter({ text: footerParts.join(" · ") });
 
         await interaction.editReply({
-            content: `🎮 **${inGameCount}** joueur(s) en partie · ${games.length} partie(s)`,
+            content: tr("ingame.summary", { count: inGameCount, games: games.length }),
             embeds,
         });
     },

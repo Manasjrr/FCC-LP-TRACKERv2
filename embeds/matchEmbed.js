@@ -3,15 +3,9 @@ const { getRankEmoji, getRankOrder } = require("../utils/rankUtils");
 const { getChampionIconUrl } = require("../utils/championUtils");
 const { getDpmUrl } = require("../utils/playerUtils");
 
-// ─── Rôles ───────────────────────────────────────────────────────────────────
-const ROLE_NAMES = {
-    TOP: "Top",
-    JUNGLE: "Jungle",
-    MIDDLE: "Mid",
-    BOTTOM: "ADC",
-    UTILITY: "Support",
-};
+// Tous les builders prennent tr = traducteur i18n (langue du serveur qui reçoit la notification)
 
+// ─── Rôles ───────────────────────────────────────────────────────────────────
 const ROLE_EMOJIS = {
     TOP: "🗡️",
     JUNGLE: "🌿",
@@ -32,12 +26,12 @@ function sortEntriesByRole(entries) {
 }
 
 // ─── Détection multi-kill ──────────────────────────────────────────────────
-function getMultiKillText(participant) {
+function getMultiKillText(participant, tr) {
     if (participant.pentaKills > 0) {
-        return `🔥 **PENTAKILL x${participant.pentaKills}** 🔥`;
+        return tr("match.pentakill", { count: participant.pentaKills });
     }
     if (participant.quadraKills > 0) {
-        return `⚡ **QUADRA KILL x${participant.quadraKills}**`;
+        return tr("match.quadrakill", { count: participant.quadraKills });
     }
     return null;
 }
@@ -52,22 +46,26 @@ function getPositionChangeText(positionBefore, positionAfter) {
 
 // ─── Ligne "en duo avec / contre" ──────────────────────────────────────────
 // trackedMates = autres joueurs suivis présents dans la game : [{ riot_id, participant }]
-function getMatesText(participant, trackedMates = []) {
+function getMatesText(participant, trackedMates = [], tr) {
     const allies = trackedMates.filter((m) => m.participant.teamId === participant.teamId);
     const enemies = trackedMates.filter((m) => m.participant.teamId !== participant.teamId);
     const names = (list) => list.map((m) => `**${m.riot_id}**`).join(", ");
 
     const lines = [];
-    if (allies.length) lines.push(`👥 En duo avec ${names(allies)}`);
-    if (enemies.length) lines.push(`⚔️ Contre ${names(enemies)}`);
+    if (allies.length) lines.push(tr("match.duoWith", { names: names(allies) }));
+    if (enemies.length) lines.push(tr("match.against", { names: names(enemies) }));
     return lines.length ? lines.join("\n") : null;
+}
+
+function getResultTitle(isRemake, win, tr) {
+    return tr(isRemake ? "match.remake" : win ? "match.victory" : "match.defeat");
 }
 
 // ─── Notification d'un match ─────────────────────────────────────────────────
 // entry  = { player, result, positionBefore, positionAfter }
 //          (result = valeur de retour de processNewMatch)
 // match  = match.info (Riot)
-function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates = []) {
+function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates = [], tr) {
     const { player, result, positionBefore, positionAfter } = entry;
     const { participant, currentRank, currentLP, finalLpChange, oldRank, isRemake } = result;
 
@@ -77,15 +75,15 @@ function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates 
         ? `\n🏆 **${oldRank}** → **${currentRank}**`
         : "";
 
-    const multiKillText = getMultiKillText(participant);
+    const multiKillText = getMultiKillText(participant, tr);
     const positionText = getPositionChangeText(positionBefore, positionAfter);
-    const matesText = getMatesText(participant, trackedMates);
+    const matesText = getMatesText(participant, trackedMates, tr);
 
-    const title = isRemake ? "⚪ REMAKE" : participant.win ? "🟢 VICTOIRE" : "🔴 DÉFAITE";
+    const title = getResultTitle(isRemake, participant.win, tr);
     const color = isRemake ? 0x808080 : participant.win ? 0x00ff00 : 0xff0000;
     const description = (isRemake
-        ? `${clickablePlayerName} vient de faire un remake !\n*Cette partie ne compte pas dans les statistiques.*`
-        : `${clickablePlayerName} vient de finir une partie !` + (multiKillText ? `\n${multiKillText}` : ""))
+        ? `${tr("match.remakeDescription", { player: clickablePlayerName })}\n${tr("match.notCounted")}`
+        : tr("match.finishedDescription", { player: clickablePlayerName }) + (multiKillText ? `\n${multiKillText}` : ""))
         + (matesText ? `\n${matesText}` : "");
 
     const embed = new EmbedBuilder()
@@ -96,18 +94,19 @@ function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates 
         .setThumbnail(entry.thumbnail ?? getChampionIconUrl(participant.championName, patchVersion))
         .addFields(
             {
-                name: "🎯 Performance",
-                value: `**${participant.kills}/${participant.deaths}/${participant.assists}** KDA\n🏆 ${participant.championName} (Niv.${participant.champLevel})`,
+                name: tr("match.performance"),
+                value: `**${participant.kills}/${participant.deaths}/${participant.assists}** KDA\n` +
+                    tr("match.championLevel", { champion: participant.championName, level: participant.champLevel }),
                 inline: true,
             },
             {
-                name: "📊 LP Change",
+                name: tr("match.lpChange"),
                 value: `**${lpChangeText}**\n${currentRank} (${currentLP} LP)${rankChange}`,
                 inline: true,
             },
             {
-                name: "⏱️ Durée",
-                value: `${Math.floor(match.gameDuration / 60)}min`,
+                name: tr("match.duration"),
+                value: tr("match.minutes", { n: Math.floor(match.gameDuration / 60) }),
                 inline: true,
             }
         );
@@ -115,7 +114,7 @@ function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates 
     // Note de la game (performance selon le rôle joué) — absente pour un remake
     if (entry.gameScore) {
         embed.addFields({
-            name: "🧮 Note de la game",
+            name: tr("match.gameScore"),
             value: `**${entry.gameScore.score}/100** (${entry.gameScore.tier.grade})`,
             inline: true,
         });
@@ -123,7 +122,7 @@ function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates 
 
     if (positionText) {
         embed.addFields({
-            name: "🏅 Classement serveur",
+            name: tr("match.serverRank"),
             value: positionText,
             inline: true,
         });
@@ -134,7 +133,7 @@ function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`stats|${matchId}|${player.puuid}`)
-            .setLabel("📊 Stats détaillées")
+            .setLabel(tr("match.detailedStats"))
             .setStyle(ButtonStyle.Secondary)
     );
 
@@ -148,7 +147,7 @@ function isSameTeamGroup(entries) {
 }
 
 // ─── Bloc d'un joueur dans l'embed duo ───────────────────────────────────────
-function buildDuoPlayerBlock(entry) {
+function buildDuoPlayerBlock(entry, tr) {
     const { player, result, positionBefore, positionAfter } = entry;
     const { participant, currentRank, currentLP, finalLpChange, oldRank, isRemake } = result;
 
@@ -179,7 +178,7 @@ function buildDuoPlayerBlock(entry) {
         const arrow = positionAfter.position < positionBefore.position ? "⬆️" : "⬇️";
         lines.push(`🏅 #${positionBefore.position} → **#${positionAfter.position}**/${positionAfter.total} ${arrow}`);
     }
-    const multiKillText = getMultiKillText(participant);
+    const multiKillText = getMultiKillText(participant, tr);
     if (multiKillText) lines.push(multiKillText);
 
     return [header, ...lines.map((l) => `> ${l}`)].join("\n");
@@ -188,20 +187,20 @@ function buildDuoPlayerBlock(entry) {
 // ─── Embed unique pour un duo / groupe dans la même équipe ───────────────────
 // Durée et Match ID affichés une seule fois, vignette = entries[0].thumbnail
 // (champion du 1er joueur + champion du duo en petit)
-function buildDuoMatchEmbed(entries, match, matchId, patchVersion) {
+function buildDuoMatchEmbed(entries, match, matchId, patchVersion, tr) {
     const first = entries[0].result;
     const { isRemake } = first;
     const win = first.participant.win;
     // Titre court pour qu'il tienne sur une ligne à côté de la vignette (mobile)
-    const title = isRemake ? "⚪ REMAKE" : win ? "🟢 VICTOIRE" : "🔴 DÉFAITE";
+    const title = getResultTitle(isRemake, win, tr);
     const color = isRemake ? 0x808080 : win ? 0x2ecc71 : 0xe74c3c;
 
-    const groupLabel = entries.length === 2 ? "👥 DuoQ" : `👥 Groupe de ${entries.length}`;
-    const subtitle = `${groupLabel} · ⏱️ ${Math.floor(match.gameDuration / 60)} min`;
+    const groupLabel = entries.length === 2 ? tr("match.duoQ") : tr("match.groupOf", { count: entries.length });
+    const subtitle = `${groupLabel} · ⏱️ ${tr("match.minutes", { n: Math.floor(match.gameDuration / 60) })}`;
 
     const parts = [`-# ${subtitle}`];
-    if (isRemake) parts.push("*Cette partie ne compte pas dans les statistiques.*");
-    parts.push(...entries.map(buildDuoPlayerBlock));
+    if (isRemake) parts.push(tr("match.notCounted"));
+    parts.push(...entries.map((e) => buildDuoPlayerBlock(e, tr)));
 
     return new EmbedBuilder()
         .setTitle(title)
@@ -221,7 +220,7 @@ function formatThousands(value) {
     return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : `${value}`;
 }
 
-function buildFlexPlayerBlock({ player, result: { participant }, gameScore }, gameDuration) {
+function buildFlexPlayerBlock({ player, result: { participant }, gameScore }, gameDuration, tr) {
     const { kills, deaths, assists } = participant;
     const kdaRatio = deaths === 0 ? "Perfect" : ((kills + assists) / deaths).toFixed(1);
     const cs = (participant.totalMinionsKilled ?? 0) + (participant.neutralMinionsKilled ?? 0);
@@ -231,46 +230,46 @@ function buildFlexPlayerBlock({ player, result: { participant }, gameScore }, ga
     const lines = [
         `⚔️ **${kills} / ${deaths} / ${assists}** · ${kdaRatio} KDA`
             + (gameScore ? `  ·  🧮 **${gameScore.score}**/100 (${gameScore.tier.grade})` : ""),
-        `🌾 ${cs} CS (${csPerMin}/min) · 💥 ${formatThousands(participant.totalDamageDealtToChampions ?? 0)} dégâts`,
+        `🌾 ${cs} CS (${csPerMin}/min) · 💥 ${tr("match.damage", { damage: formatThousands(participant.totalDamageDealtToChampions ?? 0) })}`,
     ];
-    const multiKillText = getMultiKillText(participant);
+    const multiKillText = getMultiKillText(participant, tr);
     if (multiKillText) lines.push(multiKillText);
 
     const header = `${ROLE_EMOJIS[role] ?? "❓"} **[${player.riot_id}](${getDpmUrl(player.riot_id)})** · ${participant.championName}`;
     return [header, ...lines.map((l) => `> ${l}`)].join("\n");
 }
 
-function buildFlexMatchEmbed(entries, match, matchId, patchVersion) {
+function buildFlexMatchEmbed(entries, match, matchId, patchVersion, tr) {
     const first = entries[0].result.participant;
     const isRemake = match.gameDuration < FLEX_REMAKE_MAX_DURATION;
     const sameTeam = isSameTeamGroup(entries);
 
     let title, color;
     if (isRemake) {
-        title = "⚪ REMAKE EN FLEX";
+        title = tr("match.flexRemake");
         color = 0x808080;
     } else if (!sameTeam) {
-        title = "⚔️ FACE-À-FACE EN FLEX";
+        title = tr("match.flexFaceOff");
         color = 0xffa500;
     } else {
-        title = first.win ? "🟢 VICTOIRE EN FLEX" : "🔴 DÉFAITE EN FLEX";
+        title = tr(first.win ? "match.flexVictory" : "match.flexDefeat");
         color = first.win ? 0x2ecc71 : 0xe74c3c;
     }
 
-    const trackedLabel = entries.length > 1 ? `  ·  👥 ${entries.length} joueurs suivis` : "";
-    const parts = [`-# ⏱️ ${Math.floor(match.gameDuration / 60)} min${trackedLabel}`];
+    const trackedLabel = entries.length > 1 ? `  ·  ${tr("match.trackedPlayers", { count: entries.length })}` : "";
+    const parts = [`-# ⏱️ ${tr("match.minutes", { n: Math.floor(match.gameDuration / 60) })}${trackedLabel}`];
 
     if (sameTeam) {
-        parts.push(...entries.map((e) => buildFlexPlayerBlock(e, match.gameDuration)));
+        parts.push(...entries.map((e) => buildFlexPlayerBlock(e, match.gameDuration, tr)));
     } else {
         // Face-à-face : joueurs regroupés par équipe, avec le résultat de chaque équipe
         for (const teamId of [100, 200]) {
             const team = entries.filter((e) => e.result.participant.teamId === teamId);
             if (!team.length) continue;
             const teamWin = team[0].result.participant.win;
-            const teamLabel = isRemake ? "⚪ Remake" : teamWin ? "🟢 Victoire" : "🔴 Défaite";
+            const teamLabel = tr(isRemake ? "match.teamRemake" : teamWin ? "match.teamVictory" : "match.teamDefeat");
             parts.push(`__**${teamLabel}**__`);
-            parts.push(...team.map((e) => buildFlexPlayerBlock(e, match.gameDuration)));
+            parts.push(...team.map((e) => buildFlexPlayerBlock(e, match.gameDuration, tr)));
         }
     }
 
@@ -287,33 +286,31 @@ function buildFlexMatchEmbed(entries, match, matchId, patchVersion) {
 // Même équipe → un seul embed "duo"
 // Équipes opposées → en-tête "face-à-face" + l'embed normal de chaque joueur
 // entries = [{ player, result, positionBefore, positionAfter }]
-function buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion) {
+function buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion, tr) {
     const first = entries[0].result;
     const isRemake = first.isRemake;
     const sameTeam = isSameTeamGroup(entries);
 
     const nameWithRole = (e) => {
-        const role = ROLE_NAMES[e.result.participant.teamPosition];
-        return `**${e.player.riot_id}**${role ? ` (${role})` : ""}`;
+        const role = e.result.participant.teamPosition;
+        return `**${e.player.riot_id}**${ROLE_EMOJIS[role] ? ` (${tr(`roles.${role}`)})` : ""}`;
     };
     const joinNames = (list) => list.length > 1
-        ? `${list.slice(0, -1).join(", ")} & ${list[list.length - 1]}`
+        ? `${list.slice(0, -1).join(", ")} ${tr("match.and")} ${list[list.length - 1]}`
         : list[0];
 
     let embeds;
     if (sameTeam) {
-        embeds = [buildDuoMatchEmbed(entries, match, matchId, patchVersion)];
+        embeds = [buildDuoMatchEmbed(entries, match, matchId, patchVersion, tr)];
     } else {
-        const namesText = joinNames(entries.map(nameWithRole));
-        const description = isRemake
-            ? `👥 ${namesText} ont fait un remake ensemble.`
-            : `⚔️ ${namesText} se sont affrontés !`;
+        const names = joinNames(entries.map(nameWithRole));
+        const description = tr(isRemake ? "match.groupRemake" : "match.groupFaceOff", { names });
 
         // En-tête + embed normal de chaque joueur
         // (Discord limite à 10 embeds par message : en-tête + 9 joueurs)
         embeds = [new EmbedBuilder().setDescription(description).setColor(isRemake ? 0x808080 : 0xffa500)];
         for (const entry of entries.slice(0, 9)) {
-            embeds.push(buildMatchNotifEmbed(entry, match, matchId, patchVersion).embed);
+            embeds.push(buildMatchNotifEmbed(entry, match, matchId, patchVersion, [], tr).embed);
         }
     }
 
@@ -333,27 +330,27 @@ function buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion) {
 }
 
 // ─── Embed changement de rang ─────────────────────────────────────────────────
-function buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP) {
+function buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP, tr) {
     const oldRankData = getRankOrder(oldRank, oldLP);
     const newRankData = getRankOrder(newRank, newLP);
     const rankUp = newRankData.totalScore > oldRankData.totalScore;
 
     return new EmbedBuilder()
-        .setTitle(rankUp ? "📈 PROMOTION !" : "📉 RÉTROGRADATION")
-        .setDescription(`**${player.riot_id}** a changé de rang !`)
+        .setTitle(tr(rankUp ? "match.promotion" : "match.demotion"))
+        .setDescription(tr("match.rankChanged", { riotId: player.riot_id }))
         .addFields(
-            { name: "Ancien rang", value: `${getRankEmoji(oldRank)} ${oldRank}`, inline: true },
-            { name: "Nouveau rang", value: `${getRankEmoji(newRank)} ${newRank}`, inline: true }
+            { name: tr("match.oldRank"), value: `${getRankEmoji(oldRank)} ${oldRank}`, inline: true },
+            { name: tr("match.newRank"), value: `${getRankEmoji(newRank)} ${newRank}`, inline: true }
         )
         .setColor(rankUp ? 0x00ff00 : 0xff0000)
         .setTimestamp();
 }
 
 // ─── Embed changement de pseudo ───────────────────────────────────────────────
-function buildRiotIdChangeEmbed(oldRiotId, newRiotId) {
+function buildRiotIdChangeEmbed(oldRiotId, newRiotId, tr) {
     return new EmbedBuilder()
-        .setTitle("✏️ CHANGEMENT DE PSEUDO")
-        .setDescription(`**${oldRiotId}** s'appelle désormais [**${newRiotId}**](${getDpmUrl(newRiotId)}) !`)
+        .setTitle(tr("match.renameTitle"))
+        .setDescription(tr("match.renameDescription", { oldRiotId, newRiotId, url: getDpmUrl(newRiotId) }))
         .setColor(0x5865f2)
         .setTimestamp();
 }

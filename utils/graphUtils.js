@@ -1,6 +1,7 @@
 // lp-graph.js — générateur de graphique ELO style moderne
 const { createCanvas } = require('canvas');
 const logger = require("./loggers");
+const { getTranslatorForLanguage, DEFAULT_LANGUAGE } = require("./i18n");
 
 // ─── CONFIG ─────────────────────────────────────────────────────────────────
 
@@ -342,7 +343,7 @@ function drawPoints(ctx, points, minLP, maxLP, graphW, graphH) {
     });
 }
 
-function drawStats(ctx, points, graphW) {
+function drawStats(ctx, points, graphW, tr) {
     const wins = points.filter(p => p.win).length;
     const losses = points.length - wins;
     const wr = ((wins / points.length) * 100).toFixed(0);
@@ -395,7 +396,7 @@ function drawStats(ctx, points, graphW) {
     ctx.font = '12px Arial, sans-serif';
     ctx.fillStyle = PALETTE.textMuted;
     ctx.textAlign = 'left';
-    ctx.fillText('HISTORIQUE ELO', PAD.left, PAD.top - 14);
+    ctx.fillText(tr('graph.title'), PAD.left, PAD.top - 14);
 }
 
 // ─── ENCODAGE ───────────────────────────────────────────────────────────────
@@ -424,6 +425,7 @@ function encodeJPEG(canvas, quality) {
  * @param {object} [opts]
  * @param {number} [opts.quality=0.75] Qualité JPEG (0–1)
  * @param {number} [opts.scale=2] Facteur de sur-échantillonnage (netteté)
+ * @param {Function} [opts.tr] Traducteur i18n (langue du serveur, anglais par défaut)
  * @param {boolean} [opts.useStableScale=true] Utilise les bornes LP sur tout
  *   l'historique du joueur plutôt que juste les games affichées, pour un
  *   axe Y stable entre deux générations du graphique.
@@ -433,11 +435,12 @@ async function generateLPGraph(playerId, maxGames = 200, opts = {}) {
         quality = DEFAULT_QUALITY,
         scale = DEFAULT_RENDER_SCALE,
         useStableScale = true,
+        tr = getTranslatorForLanguage(DEFAULT_LANGUAGE),
     } = opts;
 
     const rows = fetchHistory(playerId, maxGames);
     if (!rows || rows.length < MIN_POINTS) {
-        throw new Error('Pas assez de données pour générer le graphique');
+        throw new Error(tr('graph.notEnoughData'));
     }
 
     const points = rows.map(r => ({
@@ -474,7 +477,7 @@ async function generateLPGraph(playerId, maxGames = 200, opts = {}) {
     drawPeakLine(ctx, points, minLP, maxLP, graphW, graphH);
     drawLine(ctx, points, minLP, maxLP, graphW, graphH);
     drawPoints(ctx, points, minLP, maxLP, graphW, graphH);
-    drawStats(ctx, points, graphW);
+    drawStats(ctx, points, graphW, tr);
     drawPeakSummary(ctx, peak, graphW);
 
     logger.info('GRAPH', `Début encodage JPEG pour playerId: ${playerId}`, {

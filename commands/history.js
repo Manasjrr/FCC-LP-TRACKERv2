@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require("discord.js");
 const logger = require("../utils/loggers");
 const { getPlayerMatches, createHistoryEmbedWithColors } = require("../utils/historyUtils");
 const { getPlayerByRiotId, autocompletePlayers } = require("../utils/playerUtils");
+const { DEFAULT_LANGUAGE, t, getTranslator } = require("../utils/i18n");
 
 // ─────────────────────────────────────────
 //  COMMANDE
@@ -9,18 +10,18 @@ const { getPlayerByRiotId, autocompletePlayers } = require("../utils/playerUtils
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("history")
-        .setDescription("Historique des derniers matchs d'un joueur")
+        .setDescription(t(DEFAULT_LANGUAGE, "commands.history.description"))
         .addStringOption((option) =>
             option
-                .setName("joueur")
-                .setDescription("Riot ID du joueur")
+                .setName("player")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.history.options.player.description"))
                 .setRequired(true)
                 .setAutocomplete(true)
         )
         .addIntegerOption((option) =>
             option
-                .setName("nombre")
-                .setDescription("Nombre de matchs à afficher (1-25, défaut : 5)")
+                .setName("count")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.history.options.count.description"))
                 .setRequired(false)
                 .setMinValue(1)
                 .setMaxValue(25)
@@ -33,8 +34,9 @@ module.exports = {
             return;
         }
 
-        const joueurOption = interaction.options.getString("joueur");
-        const matchCount = interaction.options.getInteger("nombre") ?? 5;
+        const tr = getTranslator(interaction.guildId);
+        const joueurOption = interaction.options.getString("player");
+        const matchCount = interaction.options.getInteger("count") ?? 5;
 
         logger.info('COMMAND', `/history exécuté par ${interaction.user.tag}`, {
             guild: interaction.guildId,
@@ -44,25 +46,22 @@ module.exports = {
 
         if (!global.db) {
             logger.error('DB', `Base de données non disponible pour /history`, { guild: interaction.guildId });
-            return interaction.editReply("❌ Base de données indisponible").catch(() => { });
+            return interaction.editReply(tr("common.dbUnavailable")).catch(() => { });
         }
 
         const targetPlayer = getPlayerByRiotId(joueurOption, interaction.guildId);
         if (!targetPlayer) {
             logger.warn('COMMAND', `Joueur "${joueurOption}" introuvable dans /history`, { guild: interaction.guildId });
-            return interaction.editReply(
-                `❌ Aucun joueur trouvé pour **${joueurOption}** sur ce serveur.\n` +
-                `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
-            );
+            return interaction.editReply(tr("common.playerNotFound", { player: joueurOption }));
         }
 
         try {
             const matches = getPlayerMatches(targetPlayer.id, matchCount);
             if (!matches.length) {
-                return interaction.editReply(`❌ Aucun match trouvé pour **${targetPlayer.riot_id}**.`);
+                return interaction.editReply(tr("history.noMatchesFor", { riotId: targetPlayer.riot_id }));
             }
 
-            const embed = createHistoryEmbedWithColors(targetPlayer, matches, matchCount);
+            const embed = createHistoryEmbedWithColors(targetPlayer, matches, matchCount, tr);
 
             logger.success('COMMAND', `/history affiché pour ${targetPlayer.riot_id}`, {
                 matches: matches.length,
@@ -76,7 +75,7 @@ module.exports = {
                 error: error.message,
                 guild: interaction.guildId,
             });
-            await interaction.editReply("❌ Erreur lors de la récupération de l'historique.").catch(() => { });
+            await interaction.editReply(tr("history.error")).catch(() => { });
         }
     },
 

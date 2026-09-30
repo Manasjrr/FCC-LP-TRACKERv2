@@ -1,15 +1,16 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const logger = require("../utils/loggers");
 const { autocompletePlayers } = require("../utils/playerUtils");
+const { DEFAULT_LANGUAGE, t, getTranslator } = require("../utils/i18n");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("remove")
-        .setDescription("Supprimer un compte du monitoring")
+        .setDescription(t(DEFAULT_LANGUAGE, "commands.remove.description"))
         .addStringOption((option) =>
             option
-                .setName("joueur")
-                .setDescription("Riot ID du compte à supprimer")
+                .setName("player")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.remove.options.player.description"))
                 .setRequired(true)
                 .setAutocomplete(true)
         ),
@@ -17,7 +18,8 @@ module.exports = {
     async execute(interaction) {
         await interaction.deferReply();
 
-        const riotId = interaction.options.getString("joueur");
+        const tr = getTranslator(interaction.guildId);
+        const riotId = interaction.options.getString("player");
 
         logger.info('COMMAND', `/remove exécuté par ${interaction.user.tag}`, {
             riotId,
@@ -26,7 +28,7 @@ module.exports = {
 
         if (!global.db) {
             logger.error('DB', `Base de données non disponible pour /remove`, { guild: interaction.guildId });
-            return interaction.editReply("Base de données non disponible");
+            return interaction.editReply(tr("common.dbUnavailable"));
         }
 
         // ── Récupérer le compte ciblé sur CE serveur ──────────────────────────
@@ -42,10 +44,7 @@ module.exports = {
                 user: interaction.user.tag,
                 guild: interaction.guildId
             });
-            return interaction.editReply(
-                `Aucun compte trouvé pour **${riotId}** sur ce serveur.\n` +
-                `*Utilise l'autocomplétion ou vérifie \`/list\`.*`
-            );
+            return interaction.editReply(tr("common.playerNotFound", { player: riotId }));
         }
 
         try {
@@ -63,27 +62,19 @@ module.exports = {
                 guild: interaction.guildId
             });
 
-            let embed;
+            let description;
             try {
                 const user = await interaction.client.users.fetch(targetRow.added_by);
-                embed = new EmbedBuilder()
-                    .setTitle("🗑️ Compte retiré du monitoring")
-                    .setDescription(
-                        `**${targetRow.riot_id}** (ajouté par ${user.username}) n'est plus surveillé sur ce serveur.\n` +
-                        `*L'historique des parties est conservé.*`
-                    )
-                    .setColor(0xff9900)
-                    .setTimestamp();
+                description = tr("remove.descriptionAddedBy", { riotId: targetRow.riot_id, user: user.username });
             } catch {
-                embed = new EmbedBuilder()
-                    .setTitle("🗑️ Compte retiré du monitoring")
-                    .setDescription(
-                        `**${targetRow.riot_id}** n'est plus surveillé sur ce serveur.\n` +
-                        `*L'historique des parties est conservé.*`
-                    )
-                    .setColor(0xff9900)
-                    .setTimestamp();
+                description = tr("remove.description", { riotId: targetRow.riot_id });
             }
+
+            const embed = new EmbedBuilder()
+                .setTitle(tr("remove.title"))
+                .setDescription(description)
+                .setColor(0xff9900)
+                .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });
 
@@ -93,7 +84,7 @@ module.exports = {
                 playerId: targetRow.id,
                 guild: interaction.guildId
             });
-            return interaction.editReply("Erreur lors de la suppression.");
+            return interaction.editReply(tr("remove.error"));
         }
     },
 

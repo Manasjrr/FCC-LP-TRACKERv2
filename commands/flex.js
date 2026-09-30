@@ -5,35 +5,32 @@ const {
     getGroupThumbnailStyle,
     setGroupThumbnailStyle,
 } = require("../utils/guildSettings");
+const { DEFAULT_LANGUAGE, t, getTranslator } = require("../utils/i18n");
 const logger = require("../utils/loggers");
-
-const THUMBNAIL_LABELS = {
-    gif: "🎞️ GIF animé (chaque champion + son rôle)",
-    mosaique: "🧩 Mosaïque (tous les champions en une image)",
-};
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("flex")
-        .setDescription("Réglages des notifications Flex (admins uniquement)")
+        .setDescription(t(DEFAULT_LANGUAGE, "commands.flex.description"))
         .addBooleanOption(option =>
             option
-                .setName("activer")
-                .setDescription("true = notifier les parties Flex, false = ne plus les notifier")
+                .setName("enabled")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.flex.options.enabled.description"))
                 .setRequired(false)
         )
         .addStringOption(option =>
             option
-                .setName("vignette")
-                .setDescription("Vignette des parties à 3+ joueurs suivis / face-à-face")
+                .setName("thumbnail")
+                .setDescription(t(DEFAULT_LANGUAGE, "commands.flex.options.thumbnail.description"))
                 .setRequired(false)
                 .addChoices(
-                    { name: "GIF animé (chaque champion + son rôle)", value: "gif" },
-                    { name: "Mosaïque (tous les champions en une image)", value: "mosaique" },
+                    { name: t(DEFAULT_LANGUAGE, "commands.flex.options.thumbnail.choices.gif"), value: "gif" },
+                    { name: t(DEFAULT_LANGUAGE, "commands.flex.options.thumbnail.choices.mosaique"), value: "mosaique" },
                 )
         ),
 
     async execute(interaction) {
+        const tr = getTranslator(interaction.guildId);
         const isOwner = interaction.user.id === process.env.OWNER_ID;
         const isAdmin = interaction.member?.permissions.has(PermissionFlagsBits.Administrator);
 
@@ -43,9 +40,9 @@ module.exports = {
 
             const deniedEmbed = new EmbedBuilder()
                 .setColor("#ff0000")
-                .setTitle("🚫 Accès refusé")
-                .setDescription("Vous n'avez pas les permissions nécessaires pour utiliser cette commande.")
-                .addFields({ name: "Permissions requises", value: "• Administrateur\n• Utilisateur autorisé" })
+                .setTitle(tr("common.accessDeniedTitle"))
+                .setDescription(tr("common.accessDenied"))
+                .addFields({ name: tr("common.requiredPermissions"), value: tr("common.requiredPermissionsList") })
                 .setTimestamp();
 
             return await interaction.reply({ embeds: [deniedEmbed], flags: MessageFlags.Ephemeral });
@@ -53,17 +50,17 @@ module.exports = {
 
         await interaction.deferReply();
 
-        const activer = interaction.options.getBoolean("activer");
-        const vignette = interaction.options.getString("vignette");
+        const activer = interaction.options.getBoolean("enabled");
+        const vignette = interaction.options.getString("thumbnail");
         const changes = [];
 
         if (activer !== null) {
             setFlexEnabled(interaction.guildId, activer);
-            changes.push(activer ? "notifications Flex **activées**" : "notifications Flex **désactivées**");
+            changes.push(tr(activer ? "flex.enabled" : "flex.disabled"));
         }
         if (vignette !== null) {
             setGroupThumbnailStyle(interaction.guildId, vignette);
-            changes.push(`vignette : **${THUMBNAIL_LABELS[vignette]}**`);
+            changes.push(tr("flex.thumbnailChanged", { label: tr(`flex.thumbnails.${vignette}`) }));
         }
 
         if (changes.length) {
@@ -79,23 +76,16 @@ module.exports = {
 
         const embed = new EmbedBuilder()
             .setColor(enabled ? 0x2ecc71 : 0x808080)
-            .setTitle("⚙️ Notifications Flex")
+            .setTitle(tr("flex.title"))
             .setDescription(changes.length
                 ? `✅ ${changes.join("\n✅ ")}`
-                : "Réglages actuels du serveur :")
+                : tr("flex.currentSettings"))
             .addFields(
-                {
-                    name: "Parties Flex",
-                    value: enabled
-                        ? "✅ Notifiées *(ne comptent pas dans les stats, les LP ni les notes)*"
-                        : "❌ Non notifiées",
-                },
-                { name: "Vignette des groupes (3+ joueurs / face-à-face)", value: THUMBNAIL_LABELS[style] },
+                { name: tr("flex.flexGames"), value: tr(enabled ? "flex.notified" : "flex.notNotified") },
+                { name: tr("flex.groupThumbnail"), value: tr(`flex.thumbnails.${style}`) },
             )
-            .setFooter({ text: `Modifié par ${interaction.user.tag} · /flex activer / vignette pour changer` })
+            .setFooter({ text: changes.length ? tr("flex.footerChanged", { user: interaction.user.tag }) : tr("flex.footer") })
             .setTimestamp();
-
-        if (!changes.length) embed.setFooter({ text: "/flex activer / vignette pour changer" });
 
         await interaction.editReply({ embeds: [embed] });
     },

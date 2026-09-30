@@ -15,6 +15,7 @@
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Commands](#commands)
+- [Languages](#languages)
 - [Maintenance](#maintenance)
 - [Dependencies](#dependencies)
 - [License](#license)
@@ -42,6 +43,7 @@ It automatically detects new matches, posts win/loss alerts in designated channe
 - 📈 **LP progression graph** — visual chart of LP gains and losses over time
 - 🏆 **Weekly recap** — automated summary posted every **Friday at 6:00 PM (Paris time)**, with each player's rating and its weekly evolution
 - ➕ **Player management** — add, remove and list tracked accounts per server
+- 🌐 **Multilingual** — English by default on every new server, switch to French (or any added language) with `/language` (see [Languages](#languages))
 - ⚡ **API-efficient** — every stat is extracted from data the bot already downloads (match + timeline): a match shared by several tracked players is only fetched once, and timelines are cached
 
 ---
@@ -133,6 +135,7 @@ FCC-LP-TRACKERv2/
 │   ├── clear.js        # Delete messages (Admin/Owner only)
 │   ├── flex.js         # Enable / disable Flex notifications (Admin/Owner only)
 │   ├── force-recap.js  # Force the weekly recap (Owner only)
+│   ├── language.js     # Change the bot language on the server (Admin/Owner only)
 │   └── help.js         # Show the commands documentation
 │
 ├── database/
@@ -142,6 +145,10 @@ FCC-LP-TRACKERv2/
 │   ├── detailedStatsEmbed.js # Advanced match stats embed (timeline + comparisons)
 │   ├── matchEmbed.js         # Match notifications (solo, duo/group, remake), rank and Riot ID change embeds
 │   └── ratingEmbed.js        # Player rating details ("Infos note" button)
+│
+├── locales/
+│   ├── en.js         # English texts (default language, reference file)
+│   └── fr.js         # French texts
 │
 ├── handlers/
 │   ├── commandHandler.js      # Load + deploy slash commands dynamically
@@ -158,6 +165,7 @@ FCC-LP-TRACKERv2/
 └── utils/
     ├── playerUtils.js      # Player lookups, server ranking, DPM links, shared autocomplete
     ├── guildSettings.js    # Per-server settings (Flex notifications)
+    ├── i18n.js             # Translations: per-server language, translator, localized slash commands
     ├── ratingUtils.js      # Role-aware player rating (/100)
     ├── matchStatsUtils.js  # Detailed match stats extraction (match + timeline)
     ├── historyUtils.js     # Match history embed builder
@@ -226,30 +234,42 @@ OWNER_ID=
 | Command | Description |
 |---|---|
 | `/add riot-id` | Add a League of Legends account to the monitoring list |
-| `/remove joueur` | Remove a tracked account from the server |
+| `/remove player` | Remove a tracked account from the server |
 | `/list` | Display all monitored accounts, sorted by rank, with their rating (/100 + grade) |
-| `/stats joueur` | Detailed ranked stats and rating of a tracked player |
-| `/history joueur [nombre]` | Last N ranked games (1-25, default 5) of a tracked player |
+| `/stats player` | Detailed ranked stats and rating of a tracked player |
+| `/history player [count]` | Last N ranked games (1-25, default 5) of a tracked player |
 | `/ingame` | Show all monitored players currently in game (SoloQ / Flex) |
 | `/help` | Show the commands documentation |
-| `/clear [nombre] [channel]` | Delete messages in a channel *(Admin and Owner only)* |
-| `/flex [activer] [vignette]` | Enable / disable Flex game notifications, choose the group thumbnail (animated GIF or mosaic), or show the current settings *(Admin and Owner only)* |
+| `/language [language]` | Change the bot language on the server, or show the current one *(changing it: Admin and Owner only)* |
+| `/clear [count] [channel]` | Delete messages in a channel *(Admin and Owner only)* |
+| `/flex [enabled] [thumbnail]` | Enable / disable Flex game notifications, choose the group thumbnail (animated GIF or mosaic), or show the current settings *(Admin and Owner only)* |
 | `/forcerecap` | Force the weekly recap *(Owner only)* |
 
-The `joueur` options support autocompletion with the players tracked on the server.
+The `player` options support autocompletion with the players tracked on the server.
 
 **`/stats` buttons:**
 
 | Button | Description |
 |---|---|
-| 🔄 Actualiser | Refresh reminder |
-| 📈 Graphique LP | LP progression graph |
+| 🔄 Refresh | Refresh reminder |
+| 📈 LP Graph | LP progression graph |
 | 📜 Match History | Match history (choose the number of games) |
-| 🧮 Infos note | Rating breakdown: score, server rating ranking, main role, categories, per-stat details vs. targets, results and form |
+| 🧮 Rating info | Rating breakdown: score, server rating ranking, main role, categories, per-stat details vs. targets, results and form |
 
-**Match notification button:** 📊 Stats détaillées — full game breakdown (teams, lane opponent comparison, @15 timeline diffs), with two buttons:
-- 📢 Envoyer à tout le monde — share the breakdown publicly
-- 🧮 Détail de la note — game rating breakdown: for each stat of the role played, its value, its scale (min → target), the points earned / possible and the points lost, plus a summary of the stats that cost the most points
+**Match notification button:** 📊 Detailed stats — full game breakdown (teams, lane opponent comparison, @15 timeline diffs), with two buttons:
+- 📢 Send to everyone — share the breakdown publicly
+- 🧮 Rating breakdown — game rating breakdown: for each stat of the role played, its value, its scale (min → target), the points earned / possible and the points lost, plus a summary of the stats that cost the most points
+
+---
+
+## Languages
+
+The bot speaks **English** by default: every server that adds it gets English messages and slash command descriptions. An administrator can switch the server to another language with `/language`:
+
+- the setting is stored per server (`guild_settings.language`) and applies to everything the bot posts there: command replies, buttons, match notifications, rank / name changes and the weekly recap
+- the slash command descriptions are redeployed on that server in the new language (option names keep their technical English name; clients using that language see the translated name, e.g. `joueur` in French)
+
+**Adding a language:** copy `locales/en.js` to `locales/<code>.js` (e.g. `es.js`), translate the values — keys and `{variables}` must stay unchanged — and fill in `meta` (`name`, Intl `locale`, Discord `discordLocale`). The language is loaded automatically and appears in the `/language` choices after a restart. Any key missing from a language falls back to English.
 
 ---
 
