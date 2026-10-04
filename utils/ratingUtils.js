@@ -131,6 +131,17 @@ const ROLE_PERFORMANCE_MULTIPLIER = {
     UTILITY: 0.9,
 };
 
+// Bonus multi-kills (points /100, cumulables, ajoutés après le malus de rôle)
+const QUADRA_BONUS = 2.5;
+const PENTA_BONUS = 5;
+
+// { quadras, pentas, points } — points = 0 si aucun quadra / penta
+function getMultiKillBonus(match) {
+    const quadras = match.quadra_kills ?? 0;
+    const pentas = match.penta_kills ?? 0;
+    return { quadras, pentas, points: quadras * QUADRA_BONUS + pentas * PENTA_BONUS };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const scale = (value, [low, high]) => clamp01((value - low) / (high - low));
@@ -205,11 +216,12 @@ function scoreMatch(match, overrides = {}) {
     }
 
     const multiplier = ROLE_PERFORMANCE_MULTIPLIER[role] ?? 1;
+    const bonus = getMultiKillBonus(match).points / 100;
 
     return {
         match,
         role,
-        score: totalWeight ? (weighted / totalWeight) * multiplier : null,
+        score: totalWeight ? Math.min(1, (weighted / totalWeight) * multiplier + bonus) : null,
         categories,
         metrics,
     };
@@ -421,6 +433,7 @@ function getGameScoreDetails(match) {
         tier: getRatingTier(score),
         rawPoints,
         multiplier,
+        multiKill: getMultiKillBonus(match),
         categories,
     };
 }

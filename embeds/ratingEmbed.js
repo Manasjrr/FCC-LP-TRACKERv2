@@ -173,15 +173,26 @@ function buildGameScoreEmbed(details, match, riotId, tr) {
                 list: biggestLosses.map((m) => `${metricLabel(m)} (−${fmtPts(m.max - m.points)})`).join(", "),
             })
             : tr("rating.almostAll"),
+        // Bonus multi-kills : affiché uniquement en cas de quadra / penta
+        details.multiKill.points > 0
+            ? tr("rating.multiKillBonus", {
+                list: [
+                    details.multiKill.quadras ? `${details.multiKill.quadras} quadra` : null,
+                    details.multiKill.pentas ? `${details.multiKill.pentas} penta` : null,
+                ].filter(Boolean).join(" + "),
+                points: fmtPts(details.multiKill.points),
+            })
+            : null,
         details.multiplier !== 1
             ? tr("rating.totalWithMalus", {
                 raw: fmtPts(details.rawPoints),
                 multiplier: details.multiplier,
+                bonus: details.multiKill.points > 0 ? ` + ${fmtPts(details.multiKill.points)}` : "",
                 role: roleLabel,
                 score: details.score,
             })
             : tr("rating.total", { score: details.score }),
-    ];
+    ].filter(Boolean);
     embed.addFields({ name: tr("rating.summary"), value: summary.join("\n"), inline: false });
 
     return embed;
