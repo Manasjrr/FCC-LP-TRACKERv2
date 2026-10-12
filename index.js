@@ -100,18 +100,58 @@ client.on("guildCreate", async (guild) => {
     await deployToSingleGuild(client, guild);
 });
 
+// Bot retiré d'un serveur (ses joueurs y restent suivis tant qu'ils ne sont pas retirés)
+client.on("guildDelete", (guild) => {
+    logger.warn("BOOT", `Bot retiré du serveur : ${guild.name ?? "?"} (${guild.id})`);
+});
+
 // Toutes les interactions
 client.on("interactionCreate", (interaction) => handleInteraction(interaction));
 
+// ─── Connexion à Discord ──────────────────────────────────────────────────────
+// Sans écouteur "error", une erreur du client ferait planter le bot
+client.on("error", (error) => logger.error("DISCORD", `Erreur du client Discord`, describeError(error)));
+client.on("warn", (message) => logger.warn("DISCORD", message));
+client.on("shardDisconnect", (event, shardId) => {
+    logger.warn("DISCORD", `Déconnecté de Discord (shard ${shardId})`, { code: event?.code });
+});
+client.on("shardReconnecting", (shardId) => logger.info("DISCORD", `Reconnexion à Discord… (shard ${shardId})`));
+client.on("shardResume", (shardId, replayed) => {
+    logger.success("DISCORD", `Reconnecté à Discord (shard ${shardId})`, { replayed });
+});
+client.on("shardError", (error, shardId) => {
+    logger.error("DISCORD", `Erreur de connexion Discord (shard ${shardId})`, describeError(error));
+});
+
 // ─── Gestion des erreurs globales ─────────────────────────────────────────────
-process.on("unhandledRejection", (error) => {
-    logger.error("PROCESS", "Unhandled rejection", { error: error.message });
+// La raison d'un rejet n'est pas toujours une Error (undefined, texte...)
+function describeError(error) {
+    return { error: error?.message ?? String(error), stack: error?.stack };
+}
+
+process.on("unhandledRejection", (reason) => {
+    logger.error("PROCESS", "Unhandled rejection", describeError(reason));
 });
 
 process.on("uncaughtException", (error) => {
-    logger.error("PROCESS", "Uncaught exception", { error: error.message });
+    logger.error("PROCESS", "Uncaught exception", describeError(error));
     process.exit(1);
 });
+
+// ─── Arrêt propre (pm2 stop / restart, Ctrl+C) ────────────────────────────────
+// Sans ça, Node s'arrête sans écrire les derniers logs en attente ;
+// la base est aussi fermée proprement (journal -wal reporté dans players.db)
+let shuttingDown = false;
+function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info("PROCESS", `Arrêt du bot (${signal})`);
+    try { client.destroy(); } catch { /* arrêt quoi qu'il arrive */ }
+    try { db.close(); } catch { /* arrêt quoi qu'il arrive */ }
+    process.exit(0);
+}
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 // ─── Connexion ────────────────────────────────────────────────────────────────
 client.login(TOKEN);

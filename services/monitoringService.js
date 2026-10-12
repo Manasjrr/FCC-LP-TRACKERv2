@@ -37,6 +37,12 @@ setInterval(updatePatchVersion, 24 * 60 * 60 * 1000);
 async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP, channel) {
     const embed = buildRankChangeEmbed(player, oldRank, newRank, oldLP, newLP, getTranslator(channel.guildId));
     await channel.send({ embeds: [embed] });
+    logger.info("MONITOR", `Changement de rang envoyé pour ${player.riot_id} : ${oldRank} → ${newRank}`, { guild: channel.guildId });
+}
+
+// Salon de notification supprimé ou devenu inaccessible : la notification est perdue
+function logMissingChannel(channelId, guildId, what) {
+    logger.warn("MONITOR", `Salon ${channelId} introuvable (supprimé ou accès perdu) : ${what} non envoyé(e)`, { guild: guildId });
 }
 
 // ─── Vérification d'un joueur ─────────────────────────────────────────────────
@@ -339,7 +345,10 @@ async function sendPendingFlexNotifications(client, pendingFlexNotifications) {
             }
 
             const channel = await client.channels.fetch(channelId).catch(() => null);
-            if (!channel) continue;
+            if (!channel) {
+                logMissingChannel(channelId, guildId, `notification Flex ${matchId}`);
+                continue;
+            }
 
             // Vignette : duo (même équipe) ou partenaire de lane ; face-à-face → 1er joueur seulement
             const files = await buildDuoLaneThumbnails(entries, match, {
@@ -399,7 +408,10 @@ async function sendPendingRenames(client, pendingRenames) {
     for (const { channelId, guildId, oldRiotId, newRiotId } of pendingRenames) {
         try {
             const channel = await client.channels.fetch(channelId).catch(() => null);
-            if (!channel) continue;
+            if (!channel) {
+                logMissingChannel(channelId, guildId, `changement de pseudo ${oldRiotId} → ${newRiotId}`);
+                continue;
+            }
             await channel.send({ embeds: [buildRiotIdChangeEmbed(oldRiotId, newRiotId, getTranslator(guildId))] });
         } catch (error) {
             logger.error("MONITOR", `Erreur envoi changement de pseudo ${oldRiotId} → ${newRiotId}`, {
@@ -520,7 +532,10 @@ async function sendPendingNotifications(client, pendingNotifications) {
             }
 
             const channel = await client.channels.fetch(channelId).catch(() => null);
-            if (!channel) continue;
+            if (!channel) {
+                logMissingChannel(channelId, guildId, `notification ${matchId}`);
+                continue;
+            }
 
             // Coéquipiers / adversaires suivis détectés hors de ce cycle (notification solo)
             const trackedMates = entries.length === 1
@@ -555,11 +570,10 @@ async function sendPendingNotifications(client, pendingNotifications) {
                 await channel.send(buildPayload());
             }
 
-            if (entries.length > 1) {
-                logger.info("MONITOR", `Notification groupée envoyée pour ${matchId}`, {
-                    players: entries.map((e) => e.player.riot_id),
-                });
-            }
+            logger.info("MONITOR", `Notification${entries.length > 1 ? " groupée" : ""} envoyée pour ${matchId}`, {
+                guild: guildId,
+                players: entries.map((e) => e.player.riot_id),
+            });
 
             for (const { player, result } of entries) {
                 if (result.oldRank && result.oldRank !== result.currentRank) {
@@ -810,8 +824,10 @@ async function runCheckAllPlayers(client) {
         );
     }
 
-    if (attempted) {
-        logger.info("MONITOR", `Vérification terminée`, {
+    // Cycle toutes les 30 s : résumé seulement en cas d'erreur (les nouveaux matchs,
+    // parties détectées et notifications ont déjà leur propre ligne)
+    if (errors) {
+        logger.warn("MONITOR", `Vérification terminée avec erreurs`, {
             total: players.length,
             checked: attempted,
             errors,

@@ -127,7 +127,7 @@ async function getActiveGame(puuid, { silent = false } = {}) {
         const res = await riotGet(
             `https://euw1.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/${puuid}`
         );
-        if (!silent) logger.api("API", `getActiveGame OK pour puuid ${puuid.substring(0, 8)}...`, {
+        if (!silent) logger.debug("API", `getActiveGame OK pour puuid ${puuid.substring(0, 8)}...`, {
             gameId: res.data?.gameId,
             queueId: res.data?.gameQueueConfigId,
             gameLength: res.data?.gameLength,

@@ -7,15 +7,27 @@ if (!fs.existsSync(logsDir)) {
     fs.mkdirSync(logsDir, { recursive: true });
 }
 
-// Formatter la date/heure
+// Date/heure de Paris (le VPS est en UTC) : mêmes jours que le bilan API et le récap
+const TIMEZONE = 'Europe/Paris';
+
 function getTimestamp() {
-    return new Date().toISOString().replace('T', ' ').substring(0, 19);
+    return new Date().toLocaleString('sv-SE', { timeZone: TIMEZONE }); // 2025-01-15 14:05:09
 }
 
 // Nom du fichier du jour
 function getDailyLogFile() {
-    const date = new Date().toISOString().substring(0, 10); // 2025-01-15
+    const date = new Date().toLocaleDateString('sv-SE', { timeZone: TIMEZONE }); // 2025-01-15
     return path.join(logsDir, `${date}.log`);
+}
+
+// Données en plus de la ligne : un objet impossible à sérialiser (référence
+// circulaire, BigInt...) ne doit jamais faire planter l'appelant
+function stringifyExtra(extra) {
+    try {
+        return JSON.stringify(extra);
+    } catch (err) {
+        return `[données illisibles : ${err.message.split('\n')[0]}]`;
+    }
 }
 
 // Écriture dans un fichier
@@ -90,7 +102,7 @@ const RESET = '\x1b[0m';
 function log(level, category, message, extra = null) {
     const lvl = LEVELS[level] || LEVELS.INFO;
     const timestamp = getTimestamp();
-    const extraStr = extra ? ` | ${JSON.stringify(extra)}` : '';
+    const extraStr = extra ? ` | ${stringifyExtra(extra)}` : '';
 
     // Format ligne de log
     const fileLine  = `[${timestamp}] [${lvl.label}] [${category}] ${message}${extraStr}`;

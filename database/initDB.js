@@ -1,4 +1,5 @@
 const { MATCH_STATS_COLUMNS } = require("../utils/matchStatsUtils");
+const logger = require("../utils/loggers");
 
 // ─── Performances SQLite ──────────────────────────────────────────────────────
 // • WAL : les écritures ne bloquent plus les lectures, et chaque écriture coûte
@@ -111,7 +112,7 @@ function initDB(db) {
     // ── Migrations ────────────────────────────────────────────────────────────
     runMigrations(db);
 
-    console.log("Base de données initialisée");
+    logger.info("DB", "Base de données initialisée");
 }
 
 // ─── Migrations progressives ──────────────────────────────────────────────────
@@ -124,7 +125,7 @@ function runMigrations(db) {
 
     if (!hasActive) {
         db.prepare(`ALTER TABLE players ADD COLUMN active INTEGER DEFAULT 1`).run();
-        console.log("Migration : colonne active ajoutée à players");
+        logger.info("DB", "Migration : colonne active ajoutée à players");
     }
 
     // Migration 2 — Remplissage de player_guilds depuis players existants
@@ -151,7 +152,7 @@ function runMigrations(db) {
         });
 
         migrate();
-        console.log(`Migration : ${players.length} joueur(s) migrés vers player_guilds`);
+        logger.info("DB", `Migration : ${players.length} joueur(s) migrés vers player_guilds`);
     }
 
     // Migration 3 — Ajout colonne is_remake dans match_history
@@ -166,7 +167,7 @@ function runMigrations(db) {
             UPDATE match_history SET is_remake = 1
             WHERE match_duration < 300 AND lp_change = 0
         `).run();
-        console.log(`Migration : colonne is_remake ajoutée à match_history (${changes} remake(s) détecté(s))`);
+        logger.info("DB", `Migration : colonne is_remake ajoutée à match_history (${changes} remake(s) détecté(s))`);
     }
 
     // Migration 4 — Harmonisation du rang non classé ("Non classé" → "UNRANKED")
@@ -182,7 +183,7 @@ function runMigrations(db) {
     `).run().changes;
 
     if (unrankedPlayers || unrankedMatches) {
-        console.log(`Migration : "Non classé" → "UNRANKED" (${unrankedPlayers} joueur(s), ${unrankedMatches} match(s))`);
+        logger.info("DB", `Migration : "Non classé" → "UNRANKED" (${unrankedPlayers} joueur(s), ${unrankedMatches} match(s))`);
     }
 
     // Migration 5 — Statistiques détaillées dans match_history (rôle, CS, dégâts, vision...)
@@ -200,7 +201,7 @@ function runMigrations(db) {
                 db.prepare(`ALTER TABLE match_history ADD COLUMN ${name} ${type}`).run();
             }
         })();
-        console.log(`Migration : ${missingColumns.length} colonne(s) de stats ajoutée(s) à match_history`);
+        logger.info("DB", `Migration : ${missingColumns.length} colonne(s) de stats ajoutée(s) à match_history`);
     }
 
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_match_history_player_role
@@ -221,7 +222,7 @@ function runMigrations(db) {
 
     if (!hasGroupThumbnail) {
         db.prepare(`ALTER TABLE guild_settings ADD COLUMN group_thumbnail TEXT DEFAULT 'gif'`).run();
-        console.log("Migration : colonne group_thumbnail ajoutée à guild_settings");
+        logger.info("DB", "Migration : colonne group_thumbnail ajoutée à guild_settings");
     }
 
     // Migration 6c — Langue du bot par serveur (anglais par défaut, /language pour changer)
@@ -231,7 +232,7 @@ function runMigrations(db) {
 
     if (!hasLanguage) {
         db.prepare(`ALTER TABLE guild_settings ADD COLUMN language TEXT DEFAULT 'en'`).run();
-        console.log("Migration : colonne language ajoutée à guild_settings");
+        logger.info("DB", "Migration : colonne language ajoutée à guild_settings");
     }
 
     // Migration 7 — Dernier match ranked (SoloQ + Flex) traité par joueur
@@ -242,7 +243,7 @@ function runMigrations(db) {
 
     if (!hasLastRankedMatch) {
         db.prepare(`ALTER TABLE players ADD COLUMN last_ranked_match_id TEXT`).run();
-        console.log("Migration : colonne last_ranked_match_id ajoutée à players");
+        logger.info("DB", "Migration : colonne last_ranked_match_id ajoutée à players");
     }
 
     // Migration 8 — Date d'ajout (ou de réactivation) du joueur sur le serveur (ms)
@@ -254,7 +255,7 @@ function runMigrations(db) {
 
     if (!hasTrackedSince) {
         db.prepare(`ALTER TABLE player_guilds ADD COLUMN tracked_since INTEGER`).run();
-        console.log("Migration : colonne tracked_since ajoutée à player_guilds");
+        logger.info("DB", "Migration : colonne tracked_since ajoutée à player_guilds");
     }
 
     // Migration 9 — Compteur d'appels API Riot par jour (bilan quotidien dans logs/api.log)
