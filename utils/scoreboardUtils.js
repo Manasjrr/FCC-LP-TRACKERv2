@@ -1,4 +1,5 @@
 const { createCanvas } = require("canvas");
+require("./fonts"); // police embarquée, avant tout canvas
 const { getChampionIcon, roundedRectPath, TEAM_COLORS } = require("./thumbnailUtils");
 const { getChampionName } = require("./championUtils");
 
@@ -74,7 +75,7 @@ function drawChampion(ctx, icon, participant, x, y) {
         ctx.fillStyle = "#3f4147";
         ctx.fillRect(x, y, ICON, ICON);
         drawText(ctx, getChampionName(participant.championId).slice(0, 2), x + ICON / 2, y + ICON / 2 + 7, {
-            font: "bold 20px Arial, sans-serif", color: COLORS.muted, align: "center",
+            font: "bold 20px Arimo, Arial, sans-serif", color: COLORS.muted, align: "center",
         });
     }
     ctx.restore();
@@ -86,7 +87,7 @@ function drawChampion(ctx, icon, participant, x, y) {
     ctx.fillStyle = COLORS.background;
     ctx.fill();
     drawText(ctx, participant.champLevel ?? "", cx, cy + 5, {
-        font: "bold 14px Arial, sans-serif", align: "center",
+        font: "bold 14px Arimo, Arial, sans-serif", align: "center",
     });
 }
 
@@ -96,7 +97,7 @@ function drawScoreBadge(ctx, score, x, y) {
     if (!score) {
         ctx.fillStyle = COLORS.barTrack;
         ctx.fill();
-        drawText(ctx, "—", x + BADGE_W / 2, y + 32, { font: "bold 24px Arial, sans-serif", color: COLORS.muted, align: "center" });
+        drawText(ctx, "—", x + BADGE_W / 2, y + 32, { font: "bold 24px Arimo, Arial, sans-serif", color: COLORS.muted, align: "center" });
         return;
     }
 
@@ -107,18 +108,18 @@ function drawScoreBadge(ctx, score, x, y) {
     ctx.strokeStyle = rgba(color, 0.9);
     ctx.stroke();
 
-    drawText(ctx, score.score, x + 16, y + 33, { font: "bold 26px Arial, sans-serif", color: hex(color) });
-    drawText(ctx, grade, x + BADGE_W - 14, y + 32, { font: "bold 19px Arial, sans-serif", color: hex(color), align: "right" });
+    drawText(ctx, score.score, x + 16, y + 33, { font: "bold 26px Arimo, Arial, sans-serif", color: hex(color) });
+    drawText(ctx, grade, x + BADGE_W - 14, y + 32, { font: "bold 19px Arimo, Arial, sans-serif", color: hex(color), align: "right" });
 }
 
 // ── Pastille MVP / ACE ────────────────────────────────────────────────────────
 function drawBadge(ctx, text, x, y) {
-    ctx.font = "bold 13px Arial, sans-serif";
+    ctx.font = "bold 13px Arimo, Arial, sans-serif";
     const w = ctx.measureText(text).width + 14;
     roundedRectPath(ctx, x, y - 15, w, 20, 6);
     ctx.fillStyle = text === "MVP" ? COLORS.gold : "#8e9297";
     ctx.fill();
-    drawText(ctx, text, x + w / 2, y, { font: "bold 13px Arial, sans-serif", color: COLORS.background, align: "center" });
+    drawText(ctx, text, x + w / 2, y, { font: "bold 13px Arimo, Arial, sans-serif", color: COLORS.background, align: "center" });
 }
 
 // ── Ligne d'un joueur ─────────────────────────────────────────────────────────
@@ -143,25 +144,25 @@ function drawPlayerRow(ctx, row, icon, y, { teamColor, maxDamage, gameMinutes, f
 
     // Pseudo + champion
     const name = p.riotIdGameName || p.summonerName || getChampionName(p.championId);
-    ctx.font = "bold 21px Arial, sans-serif";
+    ctx.font = "bold 21px Arimo, Arial, sans-serif";
     const nameText = fitText(ctx, name, COL.kda - COL.name - (row.badge ? 70 : 16));
-    drawText(ctx, nameText, COL.name, top, { font: "bold 21px Arial, sans-serif", color: row.highlight ? COLORS.gold : COLORS.text });
+    drawText(ctx, nameText, COL.name, top, { font: "bold 21px Arimo, Arial, sans-serif", color: row.highlight ? COLORS.gold : COLORS.text });
     if (row.badge) drawBadge(ctx, row.badge, COL.name + ctx.measureText(nameText).width + 10, top - 1);
-    drawText(ctx, getChampionName(p.championId), COL.name, bottom, { font: "17px Arial, sans-serif", color: COLORS.muted });
+    drawText(ctx, getChampionName(p.championId), COL.name, bottom, { font: "17px Arimo, Arial, sans-serif", color: COLORS.muted });
 
     // KDA
     const ratio = p.deaths === 0 ? "Perfect" : ((p.kills + p.assists) / p.deaths).toFixed(2);
-    drawText(ctx, `${p.kills} / ${p.deaths} / ${p.assists}`, COL.kda, top, { font: "bold 21px Arial, sans-serif" });
-    drawText(ctx, `${ratio} KDA`, COL.kda, bottom, { font: "17px Arial, sans-serif", color: COLORS.muted });
+    drawText(ctx, `${p.kills} / ${p.deaths} / ${p.assists}`, COL.kda, top, { font: "bold 21px Arimo, Arial, sans-serif" });
+    drawText(ctx, `${ratio} KDA`, COL.kda, bottom, { font: "17px Arimo, Arial, sans-serif", color: COLORS.muted });
 
     // CS
     const cs = (p.totalMinionsKilled ?? 0) + (p.neutralMinionsKilled ?? 0);
-    drawText(ctx, cs, COL.cs, top, { font: "bold 21px Arial, sans-serif" });
-    drawText(ctx, fmt.perMin(gameMinutes ? cs / gameMinutes : 0), COL.cs, bottom, { font: "17px Arial, sans-serif", color: COLORS.muted });
+    drawText(ctx, cs, COL.cs, top, { font: "bold 21px Arimo, Arial, sans-serif" });
+    drawText(ctx, fmt.perMin(gameMinutes ? cs / gameMinutes : 0), COL.cs, bottom, { font: "17px Arimo, Arial, sans-serif", color: COLORS.muted });
 
     // Dégâts + barre (relative au max de la game)
     const damage = p.totalDamageDealtToChampions ?? 0;
-    drawText(ctx, fmt.number(damage), COL.damage, top, { font: "bold 21px Arial, sans-serif" });
+    drawText(ctx, fmt.number(damage), COL.damage, top, { font: "bold 21px Arimo, Arial, sans-serif" });
     roundedRectPath(ctx, COL.damage, bottom - 11, DAMAGE_BAR_W, 8, 4);
     ctx.fillStyle = COLORS.barTrack;
     ctx.fill();
@@ -193,12 +194,12 @@ function drawTeam(ctx, team, icons, y, options) {
     ctx.restore();
 
     const headerY = y + 31;
-    drawText(ctx, team.label.toUpperCase(), COL.icon, headerY, { font: "bold 17px Arial, sans-serif", color: teamColor });
-    ctx.font = "bold 17px Arial, sans-serif";
+    drawText(ctx, team.label.toUpperCase(), COL.icon, headerY, { font: "bold 17px Arimo, Arial, sans-serif", color: teamColor });
+    ctx.font = "bold 17px Arimo, Arial, sans-serif";
     const labelW = ctx.measureText(clean(team.label.toUpperCase())).width;
-    drawText(ctx, `·  ${team.result}`, COL.icon + labelW + 10, headerY, { font: "17px Arial, sans-serif", color: COLORS.muted });
+    drawText(ctx, `·  ${team.result}`, COL.icon + labelW + 10, headerY, { font: "17px Arimo, Arial, sans-serif", color: COLORS.muted });
 
-    const columnFont = { font: "bold 14px Arial, sans-serif", color: COLORS.muted };
+    const columnFont = { font: "bold 14px Arimo, Arial, sans-serif", color: COLORS.muted };
     drawText(ctx, options.columns.kda.toUpperCase(), COL.kda, headerY, columnFont);
     drawText(ctx, options.columns.cs.toUpperCase(), COL.cs, headerY, columnFont);
     drawText(ctx, options.columns.damage.toUpperCase(), COL.damage, headerY, columnFont);

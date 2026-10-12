@@ -244,6 +244,18 @@ function runMigrations(db) {
         db.prepare(`ALTER TABLE players ADD COLUMN last_ranked_match_id TEXT`).run();
         console.log("Migration : colonne last_ranked_match_id ajoutée à players");
     }
+
+    // Migration 8 — Date d'ajout (ou de réactivation) du joueur sur le serveur (ms)
+    // Les games terminées avant ne sont pas notifiées : pas de rafale de vieilles
+    // games au /add. NULL (entrées existantes) → aucun filtre
+    const hasTrackedSince = db.prepare(`
+        SELECT COUNT(*) as count FROM pragma_table_info('player_guilds') WHERE name = 'tracked_since'
+    `).get().count > 0;
+
+    if (!hasTrackedSince) {
+        db.prepare(`ALTER TABLE player_guilds ADD COLUMN tracked_since INTEGER`).run();
+        console.log("Migration : colonne tracked_since ajoutée à player_guilds");
+    }
 }
 
 module.exports = { initDB, runMigrations };

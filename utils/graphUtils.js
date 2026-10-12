@@ -1,5 +1,6 @@
 // lp-graph.js — générateur de graphique ELO style moderne
 const { createCanvas } = require('canvas');
+require('./fonts'); // police embarquée, avant tout canvas
 const logger = require("./loggers");
 const { getTranslatorForLanguage, DEFAULT_LANGUAGE } = require("./i18n");
 
@@ -181,7 +182,7 @@ function drawGridLines(ctx, minLP, maxLP, graphW, graphH) {
 function drawAxes(ctx, minLP, maxLP, graphW, graphH, pointCount) {
     ctx.save();
     // Axe Y — labels de rang
-    ctx.font = '11px Arial, sans-serif';
+    ctx.font = '11px Arimo, Arial, sans-serif';
     ctx.textAlign = 'right';
 
     TIERS.forEach(tier => {
@@ -269,7 +270,7 @@ function drawPeakLine(ctx, points, minLP, maxLP, graphW, graphH) {
     // Petit label discret directement sur la ligne, côté gauche du graphe
     // (là où il y a de la place, loin du bloc résumé en haut à droite)
     ctx.save();
-    ctx.font = '600 9px Arial, sans-serif';
+    ctx.font = '600 9px Arimo, Arial, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.45)';
     ctx.textAlign = 'left';
     ctx.fillText('PEAK', PAD.left + 6, y - 4);
@@ -292,7 +293,7 @@ function drawPeakSummary(ctx, peak, graphW) {
         : `Peak ${lpToLabel(peak.lp)} · ${lpInDivision} LP`;
 
     ctx.save();
-    ctx.font = '500 11px Arial, sans-serif';
+    ctx.font = '500 11px Arimo, Arial, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.45)';
     ctx.textAlign = 'right';
     // Juste sous le rang actuel, qui est positionné à PAD.top - 14 dans drawStats
@@ -333,7 +334,7 @@ function drawPoints(ctx, points, minLP, maxLP, graphW, graphH) {
         // Badge LP change pour les gros swings
         if (bigSwing && n < 120) {
             ctx.save();
-            ctx.font = 'bold 9px Arial, sans-serif';
+            ctx.font = 'bold 9px Arimo, Arial, sans-serif';
             ctx.textAlign = 'center';
             ctx.fillStyle = color;
             ctx.fillText(
@@ -356,7 +357,7 @@ function drawStats(ctx, points, graphW, tr) {
     const l10chg = l10[l10.length - 1].lp - l10[0].lp;
 
     const baseY = H - 22;
-    ctx.font = '13px Arial, sans-serif';
+    ctx.font = '13px Arimo, Arial, sans-serif';
 
     const pieces = [
         { text: `${points.length} games`, color: PALETTE.textDim },
@@ -390,13 +391,13 @@ function drawStats(ctx, points, graphW, tr) {
     // Rang actuel (haut droite)
     const lastRank = lpToLabel(points[points.length - 1].lp);
     const tier = getTierForLP(points[points.length - 1].lp);
-    ctx.font = '600 15px Arial, sans-serif';
+    ctx.font = '600 15px Arimo, Arial, sans-serif';
     ctx.fillStyle = tier.line;
     ctx.textAlign = 'right';
     ctx.fillText(lastRank, PAD.left + graphW, PAD.top - 14);
 
     // Titre
-    ctx.font = '12px Arial, sans-serif';
+    ctx.font = '12px Arimo, Arial, sans-serif';
     ctx.fillStyle = PALETTE.textMuted;
     ctx.textAlign = 'left';
     ctx.fillText(tr('graph.title'), PAD.left, PAD.top - 14);

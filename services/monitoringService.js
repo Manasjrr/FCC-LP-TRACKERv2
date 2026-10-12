@@ -99,6 +99,9 @@ async function processSoloQMatches(player, guildEntries, newMatchIds, { pendingN
         // Les notifications sont collectées puis envoyées en fin de cycle,
         // groupées par salon + match (plusieurs joueurs suivis dans la même game)
         for (const guildEntry of guildEntries) {
+            // Game rattrapée après un /add : enregistrée en BDD mais pas notifiée
+            if (endedBeforeTracking(result.match.info, guildEntry)) continue;
+
             const key = `${guildEntry.channel_id}|${matchId}`;
             if (!pendingNotifications.has(key)) {
                 pendingNotifications.set(key, {
@@ -223,14 +226,25 @@ async function initRankedCursor(player, guildEntries, rankedMatchIds, pending) {
     logger.info("MONITOR", `Curseur ranked initialisé pour ${player.riot_id}`, { cursor: rankedMatchIds[0] });
 }
 
+// Fin de la game (ms)
+function getMatchEndTime(matchInfo) {
+    return matchInfo.gameEndTimestamp ?? matchInfo.gameCreation + matchInfo.gameDuration * 1000;
+}
+
+// Game terminée avant l'ajout (ou la réactivation) du joueur sur ce serveur
+function endedBeforeTracking(matchInfo, guildEntry) {
+    return guildEntry.tracked_since != null && getMatchEndTime(matchInfo) < guildEntry.tracked_since;
+}
+
 function collectFlexNotification(player, flexGuildEntries, matchId, matchInfo, pendingFlexNotifications) {
-    const endedAt = matchInfo.gameEndTimestamp ?? matchInfo.gameCreation + matchInfo.gameDuration * 1000;
-    if (Date.now() - endedAt > FLEX_MAX_AGE) return;
+    if (Date.now() - getMatchEndTime(matchInfo) > FLEX_MAX_AGE) return;
 
     const participant = matchInfo.participants.find((p) => p.puuid === player.puuid);
     if (!participant) return;
 
     for (const guildEntry of flexGuildEntries) {
+        if (endedBeforeTracking(matchInfo, guildEntry)) continue;
+
         const key = `${guildEntry.channel_id}|${matchId}`;
         if (!pendingFlexNotifications.has(key)) {
             pendingFlexNotifications.set(key, {

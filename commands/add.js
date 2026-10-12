@@ -155,9 +155,9 @@ module.exports = {
                 // Entrée existante (active = 0) → réactiver
                 global.db.prepare(`
                     UPDATE player_guilds
-                    SET active = 1, channel_id = ?, user_id = ?
+                    SET active = 1, channel_id = ?, user_id = ?, tracked_since = ?
                     WHERE player_id = ? AND guild_id = ?
-                `).run(interaction.channelId, interaction.user.id, playerId, interaction.guildId);
+                `).run(interaction.channelId, interaction.user.id, Date.now(), playerId, interaction.guildId);
 
                 logger.success('DB', `player_guilds réactivé pour ${riotId}`, {
                     playerId,
@@ -166,9 +166,9 @@ module.exports = {
             } else {
                 // Nouvelle entrée
                 global.db.prepare(`
-                    INSERT INTO player_guilds (player_id, guild_id, channel_id, user_id, active)
-                    VALUES (?, ?, ?, ?, 1)
-                `).run(playerId, interaction.guildId, interaction.channelId, interaction.user.id);
+                    INSERT INTO player_guilds (player_id, guild_id, channel_id, user_id, active, tracked_since)
+                    VALUES (?, ?, ?, ?, 1, ?)
+                `).run(playerId, interaction.guildId, interaction.channelId, interaction.user.id, Date.now());
 
                 logger.success('DB', `player_guilds créé pour ${riotId}`, {
                     playerId,
