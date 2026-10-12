@@ -12,6 +12,9 @@
 *.sqlite
 *.sqlite3
 player.db
+*.db-shm
+*.db-wal
+*.db-journal
 
 # ===========================
 #   DEPENDENCIES
