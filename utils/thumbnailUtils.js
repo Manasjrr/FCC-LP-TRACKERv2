@@ -4,7 +4,7 @@ const { GIFEncoder, quantize, applyPalette } = require("gifenc");
 const { getChampionIconUrl } = require("./championUtils");
 
 // ─── Icônes de champions (Data Dragon, mises en cache en mémoire) ────────────
-const iconCache = new Map(); // "patch|champion" → Image
+const iconCache = new Map(); // "patch|champion" → PNG (Buffer)
 let iconCachePatch = null;
 
 async function getChampionIcon(championName, patchVersion) {
@@ -13,16 +13,19 @@ async function getChampionIcon(championName, patchVersion) {
         iconCache.clear();
         iconCachePatch = patchVersion;
     }
+    // On garde le PNG compressé (~4x plus léger que l'image décodée) : le
+    // décodage à chaque utilisation prend ~0,5 ms
     const key = `${patchVersion}|${championName}`;
-    if (iconCache.has(key)) return iconCache.get(key);
-
-    const res = await axios.get(getChampionIconUrl(championName, patchVersion), {
-        responseType: "arraybuffer",
-        timeout: 5000,
-    });
-    const image = await loadImage(Buffer.from(res.data));
-    iconCache.set(key, image);
-    return image;
+    let png = iconCache.get(key);
+    if (!png) {
+        const res = await axios.get(getChampionIconUrl(championName, patchVersion), {
+            responseType: "arraybuffer",
+            timeout: 5000,
+        });
+        png = Buffer.from(res.data);
+        iconCache.set(key, png);
+    }
+    return loadImage(png);
 }
 
 // ─── Partenaire de botlane ────────────────────────────────────────────────────

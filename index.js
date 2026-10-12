@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, Options } = require("discord.js");
 const Database = require("better-sqlite3");
 const cron = require("node-cron");
 const logger = require("./utils/loggers");
@@ -27,9 +27,34 @@ global.db = db;
 initDB(db);
 
 // ─── Client Discord ───────────────────────────────────────────────────────────
+// Mémoire : le bot n'utilise que les commandes slash et les boutons.
+//   • pas d'intent GuildMessages : aucun message des serveurs n'est reçu ni gardé
+//     (/clear lit les messages via l'API, sans cet intent)
+//   • caches inutilisés désactivés ; gardés : serveurs, salons et rôles
+//     (permissions), membre et utilisateur du bot lui-même (members.me)
+const isSelf = (entry) => entry.id === entry.client.user.id;
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+    intents: [GatewayIntentBits.Guilds],
     rest: { timeout: 60000 },
+    makeCache: Options.cacheWithLimits({
+        MessageManager: 0,
+        ReactionManager: 0,
+        ReactionUserManager: 0,
+        PresenceManager: 0,
+        VoiceStateManager: 0,
+        GuildEmojiManager: 0,
+        BaseGuildEmojiManager: 0,
+        GuildStickerManager: 0,
+        GuildBanManager: 0,
+        GuildInviteManager: 0,
+        GuildScheduledEventManager: 0,
+        StageInstanceManager: 0,
+        AutoModerationRuleManager: 0,
+        ThreadMemberManager: 0,
+        ApplicationCommandManager: 0,
+        GuildMemberManager: { maxSize: 0, keepOverLimit: isSelf },
+        UserManager: { maxSize: 0, keepOverLimit: isSelf },
+    }),
 });
 
 // ─── Chargement des commandes ─────────────────────────────────────────────────

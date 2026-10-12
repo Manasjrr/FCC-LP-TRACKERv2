@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node --max-semi-space-size=2 index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
