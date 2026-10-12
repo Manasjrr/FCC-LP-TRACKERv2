@@ -1,6 +1,7 @@
 const https = require("https");
 const axios = require("axios");
 const logger = require("../utils/loggers");
+const { recordApiCall } = require("../utils/apiUsage");
 
 const RIOT_API_KEY = process.env.RIOT_API_KEY;
 
@@ -11,6 +12,7 @@ const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
 // ─── Helper retry + rate limit ────────────────────────────────────────────────
 async function riotGet(url, retries = 2) {
     for (let i = 0; i <= retries; i++) {
+        recordApiCall(url);
         try {
             return await axios.get(url, {
                 headers: { "X-Riot-Token": RIOT_API_KEY },
@@ -118,28 +120,14 @@ async function getChampionMasteries(puuid) {
     return res.data;
 }
 
-// ─── Status API ───────────────────────────────────────────────────────────────
-async function checkApiStatus() {
-    try {
-        // Avant : axios.get direct sans timeout → peut bloquer indéfiniment
-        const res = await riotGet(
-            "https://euw1.api.riotgames.com/lol/status/v4/platform-data"
-        );
-        logger.info("API", `Riot API OK`, { status: res.status });
-        return true;
-    } catch (error) {
-        logger.error("API", `Riot API KO`, { status: error.response?.status });
-        return false;
-    }
-}
-
-// ─── Fetch des lives game (/ingame) ───────────────────────────────────────────────────────────────
-async function getActiveGame(puuid) {
+// ─── Fetch des lives game (/ingame, monitoring) ──────────────────────────────
+// silent : pas de log à chaque appel (monitoring : des milliers d'appels par jour)
+async function getActiveGame(puuid, { silent = false } = {}) {
     try {
         const res = await riotGet(
             `https://euw1.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/${puuid}`
         );
-        logger.api("API", `getActiveGame OK pour puuid ${puuid.substring(0, 8)}...`, {
+        if (!silent) logger.api("API", `getActiveGame OK pour puuid ${puuid.substring(0, 8)}...`, {
             gameId: res.data?.gameId,
             queueId: res.data?.gameQueueConfigId,
             gameLength: res.data?.gameLength,
@@ -148,7 +136,7 @@ async function getActiveGame(puuid) {
         return res.data;
     } catch (err) {
         if (err.response?.status === 404) {
-            logger.debug("API", `getActiveGame 404 — pas en game : ${puuid.substring(0, 8)}...`);
+            if (!silent) logger.debug("API", `getActiveGame 404 — pas en game : ${puuid.substring(0, 8)}...`);
             return null;
         }
         logger.error("API", `getActiveGame erreur pour ${puuid.substring(0, 8)}...`, {
@@ -172,6 +160,5 @@ module.exports = {
     getMatch,
     getTimeline,
     getChampionMasteries,
-    checkApiStatus,
     getActiveGame
 };

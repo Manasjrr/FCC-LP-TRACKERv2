@@ -256,6 +256,16 @@ function runMigrations(db) {
         db.prepare(`ALTER TABLE player_guilds ADD COLUMN tracked_since INTEGER`).run();
         console.log("Migration : colonne tracked_since ajoutée à player_guilds");
     }
+
+    // Migration 9 — Compteur d'appels API Riot par jour (bilan quotidien dans logs/api.log)
+    db.prepare(`
+        CREATE TABLE IF NOT EXISTS api_usage (
+            day      TEXT    NOT NULL,
+            endpoint TEXT    NOT NULL,
+            calls    INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, endpoint)
+        )
+    `).run();
 }
 
 module.exports = { initDB, runMigrations };

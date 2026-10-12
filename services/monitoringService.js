@@ -1,7 +1,7 @@
 const axios = require("axios");
 const FormData = require("form-data");
 const { getLanePartner, buildDuoLaneThumbnail, buildGroupThumbnail, buildGroupGif, TEAM_COLORS } = require("../utils/thumbnailUtils");
-const { getRecentMatchIds, getMatch, getTimeline, getFlexData } = require("./riotApiService");
+const { getRecentMatchIds, getMatch, getTimeline, getFlexData, getActiveGame } = require("./riotApiService");
 const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
 const { extractMatchStats, extractEarlyDragons, extractLaneDiffs15 } = require("../utils/matchStatsUtils");
@@ -10,7 +10,7 @@ const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = requir
 const { isSameTeamGroup, sortEntriesByRole, buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildFlexMatchEmbed, buildStatsButtonRows, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
 const { computeGameScore } = require("../utils/ratingUtils");
-const { getTranslator } = require("../utils/i18n");
+const { getTranslator, t, DEFAULT_LANGUAGE } = require("../utils/i18n");
 const logger = require("../utils/loggers");
 
 // ─── Version du patch (Data Dragon) ───────────────────────────────────────────
@@ -47,23 +47,24 @@ async function sendRankChangeNotification(player, oldRank, newRank, oldLP, newLP
 // Dans les deux cas : 1 seul appel "liste des matchs" par cycle
 //   • sans Flex : liste SoloQ (queue=420)
 //   • avec Flex : liste ranked (type=ranked → SoloQ + Flex)
+// Retourne la liste des matchs lue (le planning y cherche la game détectée en cours)
 async function checkPlayer(player, guildEntries, flexGuildEntries, pending) {
     if (flexGuildEntries.length) {
-        await checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, pending);
-        return;
+        return checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, pending);
     }
 
     const matchIds = await getRecentMatchIds(player.puuid, 10);
-    if (!matchIds?.length) return;
+    if (!matchIds?.length) return [];
 
     const newMatchIds = [];
     for (const matchId of matchIds) {
         if (matchId === player.last_match_id) break;
         newMatchIds.push(matchId);
     }
-    if (!newMatchIds.length) return;
+    if (!newMatchIds.length) return matchIds;
 
     await processSoloQMatches(player, guildEntries, newMatchIds.reverse(), pending);
+    return matchIds;
 }
 
 // ─── Traitement des nouveaux matchs SoloQ (du plus ancien au plus récent) ─────
@@ -153,16 +154,16 @@ async function getMatchInfoCached(matchId) {
 // connaître sa file et au traitement SoloQ / à la notification Flex.
 async function checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, pending) {
     const matchIds = await getRecentMatchIds(player.puuid, 10, { type: "ranked" });
-    if (!matchIds?.length) return;
+    if (!matchIds?.length) return [];
 
     const cursorId = player.last_ranked_match_id;
     if (!cursorId || !matchIds.includes(cursorId)) {
         await initRankedCursor(player, guildEntries, matchIds, pending);
-        return;
+        return matchIds;
     }
 
     const newMatchIds = matchIds.slice(0, matchIds.indexOf(cursorId)).reverse();
-    if (!newMatchIds.length) return;
+    if (!newMatchIds.length) return matchIds;
 
     const isStored = global.db.prepare(`SELECT 1 FROM match_history WHERE player_id = ? AND match_id = ?`);
     const soloQIds = [];
@@ -203,6 +204,9 @@ async function checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, 
     if (lastReadId) {
         global.db.prepare(`UPDATE players SET last_ranked_match_id = ? WHERE id = ?`).run(lastReadId, player.id);
     }
+    // Seulement les matchs traités : un match illisible (repris au prochain cycle)
+    // ne doit pas être considéré comme vu
+    return matchIds.slice(matchIds.indexOf(lastReadId ?? cursorId));
 }
 
 // ─── (Ré)initialisation du curseur ranked ────────────────────────────────────
@@ -578,14 +582,142 @@ async function sendPendingNotifications(client, pendingNotifications) {
     }
 }
 
+// ─── État de l'API Riot (déduit du monitoring, sans appel dédié) ─────────────
+// Si tous les appels du monitoring (spectateur + liste des matchs) échouent côté
+// Riot (5xx, réseau, clé refusée) pendant plusieurs minutes → un seul MP au
+// propriétaire par panne. health = { ok, failed } : appels du cycle
+const API_DOWN_DELAY = 6 * 60 * 1000;
+let apiDownSince = null;
+let apiDownAlerted = false;
+
+function isRiotUnavailable(error) {
+    if (!error.isAxiosError) return false; // erreur du bot, pas de Riot
+    const status = error.response?.status;
+    return !status || status >= 500 || status === 401 || status === 403;
+}
+
+async function updateApiHealth(client, health) {
+    if (!health.ok && !health.failed) return; // aucun appel ce cycle → rien à conclure
+
+    if (health.ok) {
+        if (apiDownAlerted) logger.success("API", `Riot API de nouveau OK`);
+        apiDownSince = null;
+        apiDownAlerted = false;
+        return;
+    }
+
+    apiDownSince ??= Date.now();
+    const minutes = Math.round((Date.now() - apiDownSince) / 60000);
+    logger.error("API", `Riot API KO (depuis ${minutes} min)`);
+    if (Date.now() - apiDownSince < API_DOWN_DELAY || apiDownAlerted) return;
+
+    apiDownAlerted = true;
+    try {
+        const user = await client.users.fetch(process.env.OWNER_ID);
+        await user.send(t(DEFAULT_LANGUAGE, "owner.apiDown"));
+        logger.info("API", "MP d'alerte envoyé");
+    } catch (err) {
+        logger.error("API", "Erreur envoi MP alerte", { error: err.message });
+    }
+}
+
+// ─── Planning des vérifications par joueur ───────────────────────────────────
+// Au lieu de lire la liste des matchs de chaque joueur toutes les 2 min, on
+// regarde s'il est en partie (API spectateur) : une vraie game dure au moins
+// 15 min, donc un contrôle toutes les 5 min (7,5 min pour un joueur inactif)
+// la repère forcément. Pendant une partie classée, la liste des matchs est lue
+// toutes les 2 min jusqu'à ce que la game y apparaisse → notification aussi
+// rapide qu'avant. Les remakes (< 5 min) peuvent passer entre deux contrôles :
+// ils sont récupérés à la vérification suivante.
+const IN_GAME_INTERVAL = 2 * 60 * 1000;
+const SPECTATOR_INTERVAL = 5 * 60 * 1000;
+const SPECTATOR_INTERVAL_INACTIVE = 7.5 * 60 * 1000;
+const INACTIVE_AFTER = 30 * 24 * 60 * 60 * 1000; // aucune game (ni /add) depuis 30 jours
+// Vérification de secours : si l'API spectateur ne voyait pas un joueur en partie
+const SAFETY_INTERVAL = 60 * 60 * 1000;
+// API spectateur en erreur → liste des matchs lue directement, nouvel essai dans 2 min
+const SPECTATOR_RETRY = 2 * 60 * 1000;
+// Game détectée qui n'apparaît jamais dans la liste (partie annulée...) → abandon
+const IN_GAME_TIMEOUT = 2 * 60 * 60 * 1000;
+// Réessai des timelines manquantes : même rythme qu'avant (le cycle tourne toutes les 30 s)
+const TIMELINE_RETRY_INTERVAL = 2 * 60 * 1000;
+
+// Mémoire seulement : au redémarrage, tous les joueurs sont vérifiés tout de suite
+const schedules = new Map(); // puuid → { nextSpectatorAt, lastMatchCheckAt, inGame }
+
+function getSchedule(puuid) {
+    if (!schedules.has(puuid)) {
+        schedules.set(puuid, {
+            // Contrôles étalés sur 5 min plutôt que tous en même temps
+            nextSpectatorAt: Date.now() + Math.random() * SPECTATOR_INTERVAL,
+            lastMatchCheckAt: 0, // → vérification de la liste des matchs au démarrage
+            inGame: null,        // { matchId, detectedAt } pendant une partie classée
+        });
+    }
+    return schedules.get(puuid);
+}
+
+// → true si la liste des matchs du joueur doit être lue maintenant
+async function isMatchCheckDue(player, rankedQueues, lastPlayedAt, now, health) {
+    const schedule = getSchedule(player.puuid);
+
+    if (schedule.inGame && now - schedule.inGame.detectedAt > IN_GAME_TIMEOUT) {
+        logger.warn("MONITOR", `Partie ${schedule.inGame.matchId} de ${player.riot_id} jamais apparue, abandon`);
+        schedule.inGame = null;
+    }
+    if (schedule.inGame) return now - schedule.lastMatchCheckAt >= IN_GAME_INTERVAL;
+
+    let due = now - schedule.lastMatchCheckAt >= SAFETY_INTERVAL;
+    if (now < schedule.nextSpectatorAt) return due;
+
+    try {
+        const game = await getActiveGame(player.puuid, { silent: true });
+        health.ok++;
+        schedule.nextSpectatorAt = now + (now - lastPlayedAt > INACTIVE_AFTER ? SPECTATOR_INTERVAL_INACTIVE : SPECTATOR_INTERVAL);
+
+        if (game && rankedQueues.includes(game.gameQueueConfigId)) {
+            schedule.inGame = { matchId: `${game.platformId}_${game.gameId}`, detectedAt: now };
+            // 1re lecture de la liste 2 min après la détection, puis toutes les 2 min
+            schedule.lastMatchCheckAt = now;
+            logger.info("MONITOR", `${player.riot_id} en partie classée`, {
+                matchId: schedule.inGame.matchId,
+                queue: game.gameQueueConfigId,
+            });
+        }
+    } catch (error) {
+        logger.warn("MONITOR", `API spectateur indisponible pour ${player.riot_id}, vérification directe`, {
+            status: error.response?.status ?? null,
+            error: error.message,
+        });
+        if (isRiotUnavailable(error)) health.failed++;
+        schedule.nextSpectatorAt = now + SPECTATOR_RETRY;
+        due = true;
+    }
+    return due;
+}
+
+// Après une lecture de la liste des matchs (réussie ou non)
+function onMatchesChecked(player, matchIds, now) {
+    const schedule = getSchedule(player.puuid);
+    schedule.lastMatchCheckAt = now;
+
+    if (schedule.inGame && matchIds?.includes(schedule.inGame.matchId)) {
+        logger.info("MONITOR", `Partie ${schedule.inGame.matchId} de ${player.riot_id} terminée et traitée`);
+        schedule.inGame = null;
+        schedule.nextSpectatorAt = now + SPECTATOR_INTERVAL;
+    }
+}
+
 // ─── Boucle principale ────────────────────────────────────────────────────────
-// Un cycle peut dépasser l'intervalle (beaucoup de joueurs, rate limit 429) :
+// Lancée toutes les 30 s : seuls les joueurs dont une vérification est due font
+// un appel. Un cycle peut durer plus longtemps (traitement d'une game, rate limit) :
 // on ignore le déclenchement suivant plutôt que de traiter deux fois les mêmes matchs
 let isChecking = false;
+let lastTimelineRetryAt = 0;
 
 async function checkAllPlayers(client) {
     if (isChecking) {
-        logger.warn("MONITOR", `Vérification précédente encore en cours, cycle ignoré`);
+        logger.debug("MONITOR", `Vérification précédente encore en cours, cycle ignoré`);
         return;
     }
     isChecking = true;
@@ -599,10 +731,6 @@ async function checkAllPlayers(client) {
 }
 
 async function runCheckAllPlayers(client) {
-    logger.info("MONITOR", `Début de la vérification`, {
-        timestamp: new Date().toISOString(),
-    });
-
     // ── Récupérer tous les joueurs avec au moins un serveur actif ────────────
     // Dédupliqués par puuid → 1 seul appel API par joueur
     const players = global.db.prepare(`
@@ -612,18 +740,24 @@ async function runCheckAllPlayers(client) {
         WHERE pg.active = 1
     `).all();
 
-    if (!players?.length) {
-        logger.info("MONITOR", `Aucun joueur à surveiller`);
-        return;
-    }
+    if (!players?.length) return;
 
-    let success = 0;
+    // Dernière game SoloQ enregistrée par joueur (fréquence des contrôles)
+    const lastGames = new Map(global.db.prepare(`
+        SELECT player_id, MAX(game_creation) AS last FROM match_history GROUP BY player_id
+    `).all().map((r) => [r.player_id, r.last]));
+
+    let attempted = 0;
     let errors = 0;
+    const health = { ok: 0, failed: 0 };
     const pendingNotifications = new Map();
     const pendingFlexNotifications = new Map();
     const pendingRenames = [];
 
     for (const player of players) {
+        const now = Date.now();
+        let matchIds = null;
+        let checked = false;
         try {
             // Récupérer tous les serveurs actifs pour ce joueur
             const guildEntries = global.db.prepare(`
@@ -633,37 +767,56 @@ async function runCheckAllPlayers(client) {
 
             // Parties Flex : uniquement pour les serveurs qui les ont activées (/flex)
             const flexGuildEntries = guildEntries.filter((g) => isFlexEnabled(g.guild_id));
+            const rankedQueues = flexGuildEntries.length ? [SOLOQ_QUEUE, FLEX_QUEUE] : [SOLOQ_QUEUE];
 
-            await checkPlayer(player, guildEntries, flexGuildEntries, {
+            // Activité : dernière game, ou ajout récent sur un serveur
+            const lastPlayedAt = Math.max(lastGames.get(player.id) ?? 0, ...guildEntries.map((g) => g.tracked_since ?? 0));
+
+            if (!(await isMatchCheckDue(player, rankedQueues, lastPlayedAt, now, health))) continue;
+
+            checked = true;
+            attempted++;
+            matchIds = await checkPlayer(player, guildEntries, flexGuildEntries, {
                 pendingNotifications,
                 pendingFlexNotifications,
                 pendingRenames,
             });
-            success++;
+            health.ok++;
         } catch (error) {
             errors++;
+            if (isRiotUnavailable(error)) health.failed++;
             logger.error("MONITOR", `Erreur monitoring pour ${player.riot_id}`, {
                 error: error.message,
                 status: error.response?.status ?? null,
                 stack: error.stack,
             });
+        } finally {
+            // Échec compris : nouvel essai au prochain intervalle, pas au prochain cycle de 30 s
+            if (checked) onMatchesChecked(player, matchIds, now);
         }
     }
+
+    await updateApiHealth(client, health);
 
     await sendPendingRenames(client, pendingRenames);
     await sendPendingNotifications(client, pendingNotifications);
     await sendPendingFlexNotifications(client, pendingFlexNotifications);
 
     // Timelines qui n'ont pas pu être récupérées lors d'un cycle précédent
-    await retryMissingTimelines().catch((error) =>
-        logger.error("MONITOR", `Erreur réessai timelines`, { error: error.message })
-    );
+    if (Date.now() - lastTimelineRetryAt >= TIMELINE_RETRY_INTERVAL) {
+        lastTimelineRetryAt = Date.now();
+        await retryMissingTimelines().catch((error) =>
+            logger.error("MONITOR", `Erreur réessai timelines`, { error: error.message })
+        );
+    }
 
-    logger.info("MONITOR", `Vérification terminée`, {
-        total: players.length,
-        success,
-        errors,
-    });
+    if (attempted) {
+        logger.info("MONITOR", `Vérification terminée`, {
+            total: players.length,
+            checked: attempted,
+            errors,
+        });
+    }
 }
 
 module.exports = {

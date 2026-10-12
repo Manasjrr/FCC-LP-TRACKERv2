@@ -9,9 +9,8 @@ const { initDB } = require("./database/initDB");
 const { loadCommands, deployCommands, deployToSingleGuild } = require("./handlers/commandHandler");
 const { handleInteraction } = require("./handlers/interactionHandler");
 const { checkAllPlayers } = require("./services/monitoringService");
-const { checkApiStatus } = require("./services/riotApiService");
 const { sendWeeklyRecap } = require("./utils/weeklyRecap");
-const { t, DEFAULT_LANGUAGE } = require("./utils/i18n");
+const { reportApiUsage, TIMEZONE: API_USAGE_TIMEZONE } = require("./utils/apiUsage");
 
 // ─── Vérification des variables d'environnement ───────────────────────────────
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -52,27 +51,20 @@ client.once("ready", async () => {
     // Monitoring
     logger.info("MONITOR", "Démarrage du monitoring...");
     checkAllPlayers(client);
-    setInterval(() => checkAllPlayers(client), 2 * 60 * 1000);
-
-    // Check API Riot
-    await checkApiStatus();
-    setInterval(async () => {
-        const ok = await checkApiStatus();
-        if (!ok) {
-            try {
-                const user = await client.users.fetch(process.env.OWNER_ID);
-                await user.send(t(DEFAULT_LANGUAGE, "owner.apiDown"));
-                logger.info("API", "MP d'alerte envoyé");
-            } catch (err) {
-                logger.error("API", "Erreur envoi MP alerte", { error: err.message });
-            }
-        }
-    }, 30 * 60 * 1000);
+    // Cycle court : chaque joueur a son propre rythme (en partie, actif, inactif),
+    // un cycle sans vérification due ne fait aucun appel.
+    // (l'état de l'API Riot est déduit du monitoring : MP au propriétaire si elle tombe)
+    setInterval(() => checkAllPlayers(client), 30 * 1000);
 
     // Récap hebdomadaire (vendredi 18h00, Paris)
     cron.schedule("0 18 * * 5", () => sendWeeklyRecap(client), {
         timezone: "Europe/Paris",
     });
+
+    // Bilan quotidien des appels API dans logs/api.log (minuit, Paris) ;
+    // au démarrage : journées terminées pendant que le bot était éteint
+    reportApiUsage();
+    cron.schedule("0 0 * * *", reportApiUsage, { timezone: API_USAGE_TIMEZONE });
 
     logger.success("BOOT", "Bot entièrement opérationnel ✅");
 });
