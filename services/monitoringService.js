@@ -659,6 +659,9 @@ const TIMELINE_RETRY_INTERVAL = 2 * 60 * 1000;
 // Mémoire seulement : au redémarrage, tous les joueurs sont vérifiés tout de suite
 const schedules = new Map(); // puuid → { nextSpectatorAt, lastMatchCheckAt, inGame }
 
+// Panne de l'API spectateur : une ligne au début et une à la fin (pas une par joueur)
+let spectatorDownSince = null;
+
 function getSchedule(puuid) {
     if (!schedules.has(puuid)) {
         schedules.set(puuid, {
@@ -685,12 +688,18 @@ async function isMatchCheckDue(player, rankedQueues, lastPlayedAt, now, health) 
     if (now < schedule.nextSpectatorAt) return due;
 
     try {
+        hourStats.spectatorChecks++;
         const game = await getActiveGame(player.puuid, { silent: true });
         health.ok++;
+        if (spectatorDownSince) {
+            logger.success("MONITOR", `API spectateur de nouveau disponible (panne de ${Math.round((now - spectatorDownSince) / 60000)} min)`);
+            spectatorDownSince = null;
+        }
         schedule.nextSpectatorAt = now + (now - lastPlayedAt > INACTIVE_AFTER ? SPECTATOR_INTERVAL_INACTIVE : SPECTATOR_INTERVAL);
 
         if (game && rankedQueues.includes(game.gameQueueConfigId)) {
             schedule.inGame = { matchId: `${game.platformId}_${game.gameId}`, detectedAt: now };
+            hourStats.gamesDetected++;
             // 1re lecture de la liste 2 min après la détection, puis toutes les 2 min
             schedule.lastMatchCheckAt = now;
             logger.info("MONITOR", `${player.riot_id} en partie classée`, {
@@ -699,10 +708,13 @@ async function isMatchCheckDue(player, rankedQueues, lastPlayedAt, now, health) 
             });
         }
     } catch (error) {
-        logger.warn("MONITOR", `API spectateur indisponible pour ${player.riot_id}, vérification directe`, {
-            status: error.response?.status ?? null,
-            error: error.message,
-        });
+        const details = { player: player.riot_id, status: error.response?.status ?? null, error: error.message };
+        if (spectatorDownSince) {
+            logger.debug("MONITOR", `API spectateur toujours indisponible`, details);
+        } else {
+            spectatorDownSince = now;
+            logger.warn("MONITOR", `API spectateur indisponible : vérification directe des matchs le temps de la panne`, details);
+        }
         if (isRiotUnavailable(error)) health.failed++;
         schedule.nextSpectatorAt = now + SPECTATOR_RETRY;
         due = true;
@@ -729,18 +741,48 @@ function onMatchesChecked(player, matchIds, now) {
 let isChecking = false;
 let lastTimelineRetryAt = 0;
 
+// Cycle bloqué (promesse qui ne se termine jamais...) : plus aucune vérification
+// n'a lieu → erreur dans les logs plutôt qu'un arrêt silencieux du monitoring
+const STUCK_AFTER = 10 * 60 * 1000;
+let cycleStartedAt = 0;
+let stuckAlerted = false;
+
+// Bilan horaire : prouve que le monitoring tourne, même quand personne ne joue
+const HEARTBEAT_INTERVAL = 60 * 60 * 1000;
+const hourStats = { spectatorChecks: 0, matchChecks: 0, gamesDetected: 0, errors: 0 };
+let lastHeartbeatAt = Date.now();
+
+function logHeartbeat(playerCount) {
+    if (Date.now() - lastHeartbeatAt < HEARTBEAT_INTERVAL) return;
+    const inGame = [...schedules.values()].filter((s) => s.inGame).length;
+    logger.info("MONITOR", `Monitoring actif (dernière heure)`, { players: playerCount, inGame, ...hourStats });
+    Object.keys(hourStats).forEach((k) => (hourStats[k] = 0));
+    lastHeartbeatAt = Date.now();
+}
+
 async function checkAllPlayers(client) {
     if (isChecking) {
-        logger.debug("MONITOR", `Vérification précédente encore en cours, cycle ignoré`);
+        const minutes = Math.round((Date.now() - cycleStartedAt) / 60000);
+        if (!stuckAlerted && Date.now() - cycleStartedAt > STUCK_AFTER) {
+            stuckAlerted = true;
+            logger.error("MONITOR", `Cycle de vérification bloqué depuis ${minutes} min : monitoring à l'arrêt`);
+        } else {
+            logger.debug("MONITOR", `Vérification précédente encore en cours, cycle ignoré`);
+        }
         return;
     }
     isChecking = true;
+    cycleStartedAt = Date.now();
     try {
         await runCheckAllPlayers(client);
     } catch (error) {
         logger.error("MONITOR", `Erreur cycle de vérification`, { error: error.message, stack: error.stack });
     } finally {
         isChecking = false;
+        if (stuckAlerted) {
+            stuckAlerted = false;
+            logger.warn("MONITOR", `Cycle débloqué après ${Math.round((Date.now() - cycleStartedAt) / 60000)} min`);
+        }
     }
 }
 
@@ -790,6 +832,7 @@ async function runCheckAllPlayers(client) {
 
             checked = true;
             attempted++;
+            hourStats.matchChecks++;
             matchIds = await checkPlayer(player, guildEntries, flexGuildEntries, {
                 pendingNotifications,
                 pendingFlexNotifications,
@@ -798,6 +841,7 @@ async function runCheckAllPlayers(client) {
             health.ok++;
         } catch (error) {
             errors++;
+            hourStats.errors++;
             if (isRiotUnavailable(error)) health.failed++;
             logger.error("MONITOR", `Erreur monitoring pour ${player.riot_id}`, {
                 error: error.message,
@@ -823,6 +867,8 @@ async function runCheckAllPlayers(client) {
             logger.error("MONITOR", `Erreur réessai timelines`, { error: error.message })
         );
     }
+
+    logHeartbeat(players.length);
 
     // Cycle toutes les 30 s : résumé seulement en cas d'erreur (les nouveaux matchs,
     // parties détectées et notifications ont déjà leur propre ligne)

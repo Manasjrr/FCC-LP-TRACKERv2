@@ -1,56 +1,61 @@
 # FCC-LP-TRACKERv2
 
-> A Discord bot that automatically monitors League of Legends player accounts and reports their ranked performance in real time.
+> The Discord bot of the **FCC community**: it automatically monitors League of Legends accounts and reports their ranked games in real time. Built and maintained by **Manas**.
 
 ---
 
 ## Table of Contents
 
-- [Overview](#overview)
 - [Features](#features)
 - [Player Rating](#player-rating)
-- [Match Data](#match-data)
-- [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
+- [Commands](#commands)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Commands](#commands)
+- [Deployment & Updates](#deployment--updates)
 - [Languages](#languages)
-- [Maintenance](#maintenance)
-- [Dependencies](#dependencies)
+- [Architecture](#architecture)
 - [License](#license)
-
----
-
-## Overview
-
-**FCC-LP-TRACKERv2** is the official Discord bot of the **FCC community**, designed to track League of Legends Solo/Duo Queue ranked games for a list of monitored players. Built and maintained by **Manas**.
-
-It automatically detects new matches, posts win/loss alerts in designated channels, and provides detailed statistics, a role-aware player rating, match history, LP graphs and weekly recaps — all from Discord slash commands.
 
 ---
 
 ## Features
 
-- 🔍 **Automatic match detection** — polls the Riot API every 2 minutes to catch new ranked games
+- 🔍 **Automatic match detection** — checks whether each player is in a ranked game, then follows that game every 2 minutes until it ends: notifications arrive as fast as with constant polling, with ~60% fewer Riot API calls
 - 👥 **Duo detection** — tracked players in the same team are grouped into a single "duo" embed (one block per player, duration and match ID shown once, thumbnail with both champions). Opponents in the same game are shown as a "⚔️ face-off"
 - 🟣 **Flex notifications (optional)** — enabled per server with `/flex`: every Flex game of the tracked players is posted as a single embed (KDA, CS, damage). Flex games are notification only and never count in stats, LP or ratings
 - 🧮 **Player rating (/100)** — role-aware score with a letter grade and its evolution over 7 / 30 days, shown in `/stats`, `/list` and the "🧮 Infos note" button (see [Player Rating](#player-rating))
 - 🎯 **Game rating** — every match notification shows the player's performance in that game, out of 100, according to the role played
-- 🏹 **Bot lane thumbnail** — for ADC and Support games, the notification thumbnail shows the champion played with the bot lane partner's champion in a small badge (generated with Canvas, icons cached in memory)
 - 📊 **Detailed player stats** — rank, winrate, KDA, LP trend, rating, top champions and server leaderboard
 - 📜 **Match history** — last N ranked games (1-25) for any tracked player, via `/history` or the `/stats` button
 - 📈 **LP progression graph** — visual chart of LP gains and losses over time
 - 🏆 **Weekly recap** — automated summary posted every **Friday at 6:00 PM (Paris time)**, with each player's rating and its weekly evolution
 - ➕ **Player management** — add, remove and list tracked accounts per server
 - 🌐 **Multilingual** — English by default on every new server, switch to French (or any added language) with `/language` (see [Languages](#languages))
-- ⚡ **API-efficient** — every stat is extracted from data the bot already downloads (match + timeline): a match shared by several tracked players is only fetched once, and timelines are cached
+- ⚡ **API-efficient** — every stat is extracted from data the bot already downloads (match + timeline): a match shared by several tracked players is only fetched once, and timelines are cached. Every Riot API call is counted and a daily report is written to `logs/api.log`
+- 🚨 **Riot API outage alert** — the owner receives a DM when every Riot API call has been failing for 6 minutes (one DM per outage)
 
 ---
 
 ## Player Rating
 
-Each player gets a score out of **100** computed from their **30 most recent ranked games** (remakes excluded). No extra Riot API call is needed: everything comes from the match history stored in the database.
+Each player gets a score out of **100** computed from their **30 most recent ranked games** (remakes excluded): 75 points of in-game performance (judged according to the **role played** in each game), 20 points of results (winrate + LP) and 5 points of form. Fewer than 10 games: the rating is **provisional**.
+
+Each match notification also shows a **game rating**: the in-game performance of that single game, out of 100.
+
+| Score | Grade | Tier |
+|---|---|---|
+| 85-100 | S+ | 🌟 CANNA-MESSI-CR7 |
+| 69-84 | S | 🔥 EXCELLENT |
+| 60-68 | A | ⭐ TRÈS BON |
+| 52-59 | B | ✅ SOLIDE |
+| 44-51 | C | ⚡ MOYEN |
+| 35-43 | D | ❌ MAUVAIS |
+| 0-34 | Z | ❄️ RAZMO TIER |
+
+<details>
+<summary><b>How the rating is computed</b></summary>
+
+<br>
 
 | Component | Points | Details |
 |---|---|---|
@@ -75,157 +80,13 @@ Each player gets a score out of **100** computed from their **30 most recent ran
 - **Objectives**: turrets (Top), dragons + barons (Jungle), team void grubs / Rift Herald / first 2 dragons (Support)
 - Support performance has a −10% modifier
 - Games recorded without detailed stats are rated on KDA only
-- Fewer than 10 games: the rating is **provisional** and pulled towards 50
+- Fewer than 10 games: the rating is pulled towards 50
 
 **Evolution:** the rating can be recomputed as it was at any past date (using only the games played before that date), which gives the evolution over 7 / 30 days in `/stats` and "Infos note", and over the week in the weekly recap — without storing any history.
 
-**Game rating:** the in-game performance of a single game (role-based, results and form excluded), scaled to 100. Shown in each match notification.
-
-**Grades:**
-
-| Score | Grade | Tier |
-|---|---|---|
-| 85-100 | S+ | 🌟 CANNA-MESSI-CR7 |
-| 69-84 | S | 🔥 EXCELLENT |
-| 60-68 | A | ⭐ TRÈS BON |
-| 52-59 | B | ✅ SOLIDE |
-| 44-51 | C | ⚡ MOYEN |
-| 35-43 | D | ❌ MAUVAIS |
-| 0-34 | Z | ❄️ RAZMO TIER |
-
 All weights, targets and tiers are configured in [`utils/ratingUtils.js`](utils/ratingUtils.js) (`ROLE_PROFILES`, `ROLE_PERFORMANCE_MULTIPLIER`, `RATING_TIERS`, `FORM_SCALE`).
 
----
-
-## Match Data
-
-Every ranked game is stored in the `match_history` table with:
-
-- **Core data** — champion, K/D/A, win, LP change, rank before/after, duration, remake flag
-- **Detailed stats** — role, lane opponent, CS, gold, damage (dealt, taken, share), kill participation, vision, wards, objectives, multi-kills, items, summoner spells, runes (see [`utils/matchStatsUtils.js`](utils/matchStatsUtils.js))
-- **Timeline stats** — gold / XP / CS difference against the lane opponent at 15:00, number of the first 2 dragons taken by the team
-- **Raw data** — the full Riot participant object (`participant_json`), so any other stat can be extracted later (e.g. for a web dashboard)
-
-The timeline is downloaded in the background when a new game is detected (once per match). If the download fails, it is retried automatically on the next monitoring cycles (up to 3 attempts, games under 7 days old).
-
-New columns are created automatically at startup: to add a stat, declare it in `MATCH_STATS_COLUMNS` and fill it in `extractMatchStats`.
-
----
-
-## Architecture
-
-```
-FCC-LP-TRACKERv2/
-│
-├── index.js          # Entry point — initializes bot, events, cron jobs, monitoring loop
-├── players.db        # better-SQLite3 database (auto-generated)
-├── .env              # Environment variables
-│
-├── cache/
-│   ├── matchCache.js     # In-memory cache for match data (reduces API calls)
-│   └── timelineCache.js  # In-memory cache for match timelines
-│
-├── commands/
-│   ├── add.js          # Add a player to monitoring
-│   ├── remove.js       # Remove a tracked player
-│   ├── list.js         # List all monitored players (rank + rating)
-│   ├── stats.js        # Detailed stats and rating for a player
-│   ├── history.js      # Match history for a player
-│   ├── ingame.js       # Show tracked players currently in game
-│   ├── clear.js        # Delete messages (Admin/Owner only)
-│   ├── flex.js         # Enable / disable Flex notifications (Admin/Owner only)
-│   ├── force-recap.js  # Force the weekly recap (Owner only)
-│   ├── language.js     # Change the bot language on the server (Admin/Owner only)
-│   └── help.js         # Show the commands documentation
-│
-├── database/
-│   └── initDB.js     # Database schema creation + indexes + migrations
-│
-├── embeds/
-│   ├── detailedStatsEmbed.js # Advanced match stats embed (timeline + comparisons)
-│   ├── matchEmbed.js         # Match notifications (solo, duo/group, remake), rank and Riot ID change embeds
-│   └── ratingEmbed.js        # Player rating details ("Infos note" button)
-│
-├── locales/
-│   ├── en.js         # English texts (default language, reference file)
-│   └── fr.js         # French texts
-│
-├── handlers/
-│   ├── commandHandler.js      # Load + deploy slash commands dynamically
-│   └── interactionHandler.js  # Central router for commands, buttons, and modals
-│
-├── scripts/
-│   └── backfillMatchStats.js  # One-off backfill of detailed / timeline stats for older games
-│
-├── services/
-│   ├── matchService.js       # Match processing (LP calc, remake detection, stats, timeline, Riot ID sync)
-│   ├── monitoringService.js  # Main loop — detects new matches and sends (grouped) notifications
-│   └── riotApiService.js     # Riot API wrapper (retry, rate limit handling, endpoints)
-│
-└── utils/
-    ├── playerUtils.js      # Player lookups, server ranking, DPM links, shared autocomplete
-    ├── guildSettings.js    # Per-server settings (Flex notifications)
-    ├── i18n.js             # Translations: per-server language, translator, localized slash commands
-    ├── ratingUtils.js      # Role-aware player rating (/100)
-    ├── matchStatsUtils.js  # Detailed match stats extraction (match + timeline)
-    ├── historyUtils.js     # Match history embed builder
-    ├── rankUtils.js        # Rank emoji and ordering helpers
-    ├── championUtils.js    # Champion names / ids / icons
-    ├── thumbnailUtils.js   # Bot lane thumbnail (champion + lane partner) generation
-    ├── graphUtils.js       # LP graph generation (Canvas)
-    ├── weeklyRecap.js      # Weekly recap builder and sender
-    └── loggers.js          # Console and file logger
-```
-
----
-
-## Prerequisites
-
-- [Node.js](https://nodejs.org/) v18 or higher
-- A [Discord Application](https://discord.com/developers/applications) with a bot token
-- A [Riot Games API key](https://developer.riotgames.com/) (Development or Production)
-
----
-
-## Installation
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/Manasjrr/FCC-LP-TRACKERv2
-cd FCC-LP-TRACKERv2
-
-# 2. Install dependencies
-npm install
-
-# 3. Create and fill in your environment file
-cp .env.example .env
-# Then edit .env with your values (see Configuration)
-
-# 4. Start the bot
-node index.js
-```
-
-The database and its migrations are applied automatically at startup. After updating the code, **restart the bot** for the changes to take effect.
-
----
-
-## Configuration
-
-Create a `.env` file at the root of the project:
-
-```env
-DISCORD_TOKEN=
-CLIENT_ID=
-RIOT_API_KEY=
-OWNER_ID=
-```
-
-| Variable | Description |
-|---|---|
-| `DISCORD_TOKEN` | Your Discord bot's secret token — [Developer Portal](https://discord.com/developers/applications) → Bot → Token |
-| `CLIENT_ID` | Your bot's application ID — Developer Portal → General Information → Application ID |
-| `RIOT_API_KEY` | Your Riot Games API key — [Riot Developer Portal](https://developer.riotgames.com/). Development keys expire every 24h; a production key is recommended for permanent deployment |
-| `OWNER_ID` | Discord user ID of the bot owner. Grants access to restricted administrative commands |
+</details>
 
 ---
 
@@ -262,6 +123,74 @@ The `player` options support autocompletion with the players tracked on the serv
 
 ---
 
+## Installation
+
+**Prerequisites:** [Node.js](https://nodejs.org/) v18 or higher, a [Discord Application](https://discord.com/developers/applications) with a bot token, a [Riot Games API key](https://developer.riotgames.com/).
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/Manasjrr/FCC-LP-TRACKERv2
+cd FCC-LP-TRACKERv2
+
+# 2. Install dependencies
+npm install
+
+# 3. Create a .env file at the root with your values (see Configuration)
+
+# 4. Start the bot
+npm start
+```
+
+The database and its migrations are applied automatically at startup. After updating the code, **restart the bot** for the changes to take effect.
+
+---
+
+## Configuration
+
+Create a `.env` file at the root of the project:
+
+```env
+DISCORD_TOKEN=
+CLIENT_ID=
+RIOT_API_KEY=
+OWNER_ID=
+```
+
+| Variable | Description |
+|---|---|
+| `DISCORD_TOKEN` | Your Discord bot's secret token — [Developer Portal](https://discord.com/developers/applications) → Bot → Token |
+| `CLIENT_ID` | Your bot's application ID — Developer Portal → General Information → Application ID |
+| `RIOT_API_KEY` | Your Riot Games API key — [Riot Developer Portal](https://developer.riotgames.com/). Development keys expire every 24h; a production key is recommended for permanent deployment |
+| `OWNER_ID` | Discord user ID of the bot owner. Grants access to restricted administrative commands and receives the Riot API outage DM |
+
+---
+
+## Deployment & Updates
+
+### Running on a server (e.g. with pm2)
+
+```bash
+pm2 start index.js --name fcc-lp-tracker --node-args="--max-semi-space-size=2"
+```
+
+`--max-semi-space-size=2` lowers memory usage (it is also used by `npm start`). If squares appear instead of letters in the generated images, install system fonts: `sudo apt install fontconfig fonts-liberation`.
+
+### Updating the bot
+
+```bash
+pm2 stop fcc-lp-tracker              # 1. stop the bot (closes the database cleanly)
+cp players.db* ~/backup-db/          # 2. back up the database (recommended)
+git fetch origin                     # 3. get the latest code
+git reset --hard origin/main         #    and replace the local code with it
+pm2 start fcc-lp-tracker             # 4. restart (migrations run automatically)
+```
+
+- `players.db`, `players.db-wal` and `players.db-shm` are ignored by git: **git never touches the database** (`fetch`, `reset --hard`, `pull`)
+- ⚠️ Never run `git clean -x` on the server: it deletes ignored files, including the database and the logs
+- ⚠️ Never commit the database: the repository is public and the database contains Discord IDs and Riot accounts
+
+---
+
 ## Languages
 
 The bot speaks **English** by default: every server that adds it gets English messages and slash command descriptions. An administrator can switch the server to another language with `/language`:
@@ -273,38 +202,87 @@ The bot speaks **English** by default: every server that adds it gets English me
 
 ---
 
-## Maintenance
+## Architecture
 
-### Backfilling older games
+<details>
+<summary><b>Project structure</b></summary>
 
-Games recorded before the detailed stats were introduced can be completed with:
+<br>
 
-```bash
-node scripts/backfillMatchStats.js [--delay 1500] [--limit 100] [--dry-run] [--db path.db]
+```
+FCC-LP-TRACKERv2/
+│
+├── index.js          # Entry point — initializes bot, events, cron jobs, monitoring loop, graceful shutdown
+├── players.db        # better-SQLite3 database (auto-generated, never committed)
+├── .env              # Environment variables (never committed)
+├── logs/             # Log files: one per day, errors.log, api.log (auto-generated, never committed)
+│
+├── assets/
+│   └── fonts/        # Arimo font (SIL OFL) used for every generated image
+│
+├── cache/
+│   ├── ttlCache.js       # Bounded in-memory cache (expiration + max size, LRU)
+│   ├── matchCache.js     # In-memory cache for match data (reduces API calls)
+│   └── timelineCache.js  # In-memory cache for match timelines (compacted)
+│
+├── commands/
+│   ├── add.js          # Add a player to monitoring
+│   ├── remove.js       # Remove a tracked player
+│   ├── list.js         # List all monitored players (rank + rating)
+│   ├── stats.js        # Detailed stats and rating for a player
+│   ├── history.js      # Match history for a player
+│   ├── ingame.js       # Show tracked players currently in game
+│   ├── clear.js        # Delete messages (Admin/Owner only)
+│   ├── flex.js         # Enable / disable Flex notifications (Admin/Owner only)
+│   ├── force-recap.js  # Force the weekly recap (Owner only)
+│   ├── language.js     # Change the bot language on the server (Admin/Owner only)
+│   └── help.js         # Show the commands documentation
+│
+├── database/
+│   └── initDB.js     # Database schema creation + indexes + migrations
+│
+├── embeds/
+│   ├── detailedStatsEmbed.js # Advanced match stats embed (timeline + comparisons)
+│   ├── matchEmbed.js         # Match notifications (solo, duo/group, remake), rank and Riot ID change embeds
+│   └── ratingEmbed.js        # Player rating details ("Infos note" button)
+│
+├── locales/
+│   ├── en.js         # English texts (default language, reference file)
+│   └── fr.js         # French texts
+│
+├── handlers/
+│   ├── commandHandler.js      # Load + deploy slash commands dynamically
+│   └── interactionHandler.js  # Central router for commands, buttons, and modals
+│
+├── scripts/
+│   ├── backfillMatchStats.js  # One-off backfill of detailed / timeline stats for older games
+│   └── testFlexNotif.js       # Sends a fake Flex notification on a test server
+│
+├── services/
+│   ├── matchService.js       # Match processing (LP calc, remake detection, stats, timeline, Riot ID sync)
+│   ├── monitoringService.js  # Main loop — per-player schedule (in game / active / inactive), new matches,
+│   │                         # (grouped) notifications, API outage alert, hourly heartbeat
+│   └── riotApiService.js     # Riot API wrapper (retry, rate limit handling, call counting, endpoints)
+│
+└── utils/
+    ├── playerUtils.js      # Player lookups, server ranking, DPM links, shared autocomplete
+    ├── guildSettings.js    # Per-server settings (Flex notifications)
+    ├── i18n.js             # Translations: per-server language, translator, localized slash commands
+    ├── ratingUtils.js      # Role-aware player rating (/100)
+    ├── matchStatsUtils.js  # Detailed match stats extraction (match + timeline)
+    ├── historyUtils.js     # Match history embed builder
+    ├── rankUtils.js        # Rank emoji and ordering helpers
+    ├── championUtils.js    # Champion names / ids / icons
+    ├── thumbnailUtils.js   # Notification thumbnails (bot lane duo, group mosaic / animated GIF)
+    ├── scoreboardUtils.js  # Scoreboard image of a game ("Detailed stats")
+    ├── graphUtils.js       # LP graph generation (Canvas)
+    ├── fonts.js            # Registers the bundled font before any image is drawn
+    ├── weeklyRecap.js      # Weekly recap builder and sender
+    ├── apiUsage.js         # Riot API call counter + daily report in logs/api.log
+    └── loggers.js          # Console and file logger (Paris time, buffered writes)
 ```
 
-- Downloads the match (and its timeline when needed) for each incomplete game, most recent first
-- Uses **2 Riot API requests per game** — run it with a slow `--delay` if the bot is running at the same time (same API key)
-- Can be stopped and restarted at any time: only incomplete games are processed
-- `--dry-run` only displays how many games and requests would be needed
-
-This is only needed once (e.g. after a long bot downtime): new games are filled automatically by the bot.
-
-> 💡 Back up `players.db` before running scripts that write to the database.
-
----
-
-## Dependencies
-
-| Package | Purpose |
-|---|---|
-| `discord.js` | Discord API interactions and slash commands |
-| `better-sqlite3` | Local SQLite database for players and match history |
-| `axios` | HTTP requests to the Riot Games API |
-| `node-cron` | Scheduled tasks (weekly recap on Fridays) |
-| `canvas` | Server-side LP graph image generation |
-| `dotenv` | Environment variable loading |
-| `form-data` | File uploads (LP graph) |
+</details>
 
 ---
 
