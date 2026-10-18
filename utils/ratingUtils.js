@@ -463,11 +463,7 @@ function getGuildRatingRanking(players) {
 }
 
 module.exports = {
-    RATING_MATCH_COUNT,
     CONFIDENT_GAMES,
-    RATING_TIERS,
-    ROLE_PROFILES,
-    getRatingTier,
     getTierLabel,
     getRoleLabel,
     getCategoryLabel,

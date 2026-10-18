@@ -49,8 +49,6 @@ function createTtlCache({ ttl, maxSize, onExpire = () => {} }) {
     return {
         get,
         set,
-        has: (key) => get(key) !== null,
-        delete: (key) => entries.delete(key),
         get size() {
             return entries.size;
         },

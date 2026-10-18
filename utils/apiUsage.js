@@ -60,4 +60,4 @@ function reportApiUsage() {
     }
 }
 
-module.exports = { recordApiCall, reportApiUsage, getEndpoint, TIMEZONE };
+module.exports = { recordApiCall, reportApiUsage, TIMEZONE };

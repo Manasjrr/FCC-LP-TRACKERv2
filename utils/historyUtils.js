@@ -118,5 +118,4 @@ function createHistoryEmbedWithColors(player, matches, requestedCount, tr) {
 module.exports = {
     getPlayerMatches,
     createHistoryEmbedWithColors,
-    getTimeAgo
 };

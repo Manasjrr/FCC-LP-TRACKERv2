@@ -32,7 +32,6 @@ function setGroupThumbnailStyle(guildId, style) {
 }
 
 module.exports = {
-    GROUP_THUMBNAIL_STYLES,
     isFlexEnabled,
     setFlexEnabled,
     getGroupThumbnailStyle,

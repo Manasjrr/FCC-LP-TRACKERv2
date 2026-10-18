@@ -44,19 +44,6 @@ function getPositionChangeText(positionBefore, positionAfter) {
     return `${arrow} #${positionAfter.position}/${positionAfter.total}`;
 }
 
-// ─── Ligne "en duo avec / contre" ──────────────────────────────────────────
-// trackedMates = autres joueurs suivis présents dans la game : [{ riot_id, participant }]
-function getMatesText(participant, trackedMates = [], tr) {
-    const allies = trackedMates.filter((m) => m.participant.teamId === participant.teamId);
-    const enemies = trackedMates.filter((m) => m.participant.teamId !== participant.teamId);
-    const names = (list) => list.map((m) => `**${m.riot_id}**`).join(", ");
-
-    const lines = [];
-    if (allies.length) lines.push(tr("match.duoWith", { names: names(allies) }));
-    if (enemies.length) lines.push(tr("match.against", { names: names(enemies) }));
-    return lines.length ? lines.join("\n") : null;
-}
-
 function getResultTitle(isRemake, win, tr) {
     return tr(isRemake ? "match.remake" : win ? "match.victory" : "match.defeat");
 }
@@ -65,7 +52,7 @@ function getResultTitle(isRemake, win, tr) {
 // entry  = { player, result, positionBefore, positionAfter }
 //          (result = valeur de retour de processNewMatch)
 // match  = match.info (Riot)
-function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates = [], tr) {
+function buildMatchNotifEmbed(entry, match, matchId, patchVersion, tr) {
     const { player, result, positionBefore, positionAfter } = entry;
     const { participant, currentRank, currentLP, finalLpChange, oldRank, isRemake } = result;
 
@@ -77,14 +64,12 @@ function buildMatchNotifEmbed(entry, match, matchId, patchVersion, trackedMates 
 
     const multiKillText = getMultiKillText(participant, tr);
     const positionText = getPositionChangeText(positionBefore, positionAfter);
-    const matesText = getMatesText(participant, trackedMates, tr);
 
     const title = getResultTitle(isRemake, participant.win, tr);
     const color = isRemake ? 0x808080 : participant.win ? 0x00ff00 : 0xff0000;
-    const description = (isRemake
+    const description = isRemake
         ? `${tr("match.remakeDescription", { player: clickablePlayerName })}\n${tr("match.notCounted")}`
-        : tr("match.finishedDescription", { player: clickablePlayerName }) + (multiKillText ? `\n${multiKillText}` : ""))
-        + (matesText ? `\n${matesText}` : "");
+        : tr("match.finishedDescription", { player: clickablePlayerName }) + (multiKillText ? `\n${multiKillText}` : "");
 
     const embed = new EmbedBuilder()
         .setTitle(title)
@@ -317,7 +302,7 @@ function buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion, tr) {
         // (Discord limite à 10 embeds par message : en-tête + 9 joueurs)
         embeds = [new EmbedBuilder().setDescription(description).setColor(isRemake ? 0x808080 : 0xffa500)];
         for (const entry of entries.slice(0, 9)) {
-            embeds.push(buildMatchNotifEmbed(entry, match, matchId, patchVersion, [], tr).embed);
+            embeds.push(buildMatchNotifEmbed(entry, match, matchId, patchVersion, tr).embed);
         }
     }
 

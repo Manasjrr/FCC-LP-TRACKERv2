@@ -393,8 +393,6 @@ module.exports = {
         remakeDescription: "{player} just had a remake!",
         finishedDescription: "{player} just finished a game!",
         notCounted: "*This game does not count in the stats.*",
-        duoWith: "👥 Duo with {names}",
-        against: "⚔️ Against {names}",
         pentakill: "🔥 **PENTAKILL x{count}** 🔥",
         quadrakill: "⚡ **QUADRA KILL x{count}**",
         performance: "🎯 Performance",

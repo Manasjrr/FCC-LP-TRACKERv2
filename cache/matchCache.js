@@ -22,16 +22,4 @@ function getMatch(matchId) {
     return matchCache.get(matchId);
 }
 
-function hasMatch(matchId) {
-    return matchCache.has(matchId);
-}
-
-function deleteMatch(matchId) {
-    matchCache.delete(matchId);
-}
-
-function getSize() {
-    return matchCache.size;
-}
-
-module.exports = { setMatch, getMatch, hasMatch, deleteMatch, getSize };
+module.exports = { setMatch, getMatch };

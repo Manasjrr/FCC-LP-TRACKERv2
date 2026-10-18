@@ -370,10 +370,8 @@ async function processNewMatch(player, matchId, isLatest = false) {
 
 module.exports = {
     processNewMatch,
-    calculateLPChange,
     fetchAndCacheTimeline,
     storeTimelineStats,
     storeMatchStats,
     retryMissingTimelines,
-    isHighElo,
 };

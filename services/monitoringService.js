@@ -117,6 +117,7 @@ async function processSoloQMatches(player, guildEntries, newMatchIds, { pendingN
                     matchId,
                     match: result.match.info,
                     entries: [],
+                    createdAt: Date.now(),
                 });
             }
 
@@ -263,6 +264,7 @@ function collectFlexNotification(player, flexGuildEntries, matchId, matchInfo, p
                 matchId,
                 match: matchInfo,
                 entries: [],
+                createdAt: Date.now(),
             });
         }
         const pendingFlex = pendingFlexNotifications.get(key);
@@ -537,11 +539,6 @@ async function sendPendingNotifications(client, pendingNotifications) {
                 continue;
             }
 
-            // Coéquipiers / adversaires suivis détectés hors de ce cycle (notification solo)
-            const trackedMates = entries.length === 1
-                ? getTrackedPlayersInMatch(match, guildId).filter((m) => m.id !== entries[0].player.id)
-                : [];
-
             // Notification dans la langue du serveur
             const tr = getTranslator(guildId);
             const buildPayload = () => {
@@ -549,7 +546,7 @@ async function sendPendingNotifications(client, pendingNotifications) {
                     const { embeds, rows } = buildGroupMatchNotifEmbed(entries, match, matchId, patchVersion, tr);
                     return { embeds, components: rows };
                 }
-                const { embed, row } = buildMatchNotifEmbed(entries[0], match, matchId, patchVersion, trackedMates, tr);
+                const { embed, row } = buildMatchNotifEmbed(entries[0], match, matchId, patchVersion, tr);
                 return { embeds: [embed], components: [row] };
             };
 
@@ -734,6 +731,103 @@ function onMatchesChecked(player, matchIds, now) {
     }
 }
 
+// ─── Regroupement des joueurs suivis d'une même game ─────────────────────────
+// Chaque joueur a son propre rythme de vérification, et Riot n'ajoute pas la game
+// à la liste de tous les joueurs au même instant : sans attente, deux joueurs
+// suivis de la même game (duo...) pouvaient être notifiés séparément, à des
+// cycles différents. Une notification à laquelle il manque un joueur suivi de la
+// game est donc retenue d'un cycle à l'autre (GROUP_WAIT max), et la liste des
+// matchs du joueur manquant est relue sans attendre son planning.
+const GROUP_WAIT = 4 * 60 * 1000;
+// Relecture forcée de la liste d'un joueur manquant : au plus 1 fois par minute
+const GROUP_RECHECK_INTERVAL = 60 * 1000;
+// Notifications retenues, reprises au cycle suivant (mémoire seulement)
+const deferredNotifications = new Map();
+const deferredFlexNotifications = new Map();
+
+// Joueurs suivis du serveur présents dans la game mais absents de la notification,
+// dont la liste des matchs lue ce cycle ne contient pas encore la game
+// (si elle la contient, le joueur a déjà été traité : rien à attendre)
+function getMissingGroupPlayers(notification, seenMatchIds) {
+    const notified = new Set(notification.entries.map((e) => e.player.id));
+    return getTrackedPlayersInMatch(notification.match, notification.guildId).filter(
+        (p) => !notified.has(p.id) && !seenMatchIds.get(p.puuid)?.includes(notification.matchId)
+    );
+}
+
+// Lecture de la liste des matchs d'un joueur hors de son planning
+async function forceMatchCheck(playerId, pending, seenMatchIds) {
+    // Ligne relue : le joueur a pu être traité plus tôt dans ce cycle (curseurs à jour)
+    const player = global.db.prepare(`SELECT * FROM players WHERE id = ?`).get(playerId);
+    if (!player) return;
+
+    const now = Date.now();
+    const guildEntries = global.db.prepare(`
+        SELECT * FROM player_guilds
+        WHERE player_id = ? AND active = 1
+    `).all(player.id);
+    const flexGuildEntries = guildEntries.filter((g) => isFlexEnabled(g.guild_id));
+
+    let matchIds = null;
+    hourStats.matchChecks++;
+    try {
+        matchIds = await checkPlayer(player, guildEntries, flexGuildEntries, pending);
+        seenMatchIds.set(player.puuid, matchIds);
+    } catch (error) {
+        hourStats.errors++;
+        logger.warn("MONITOR", `Erreur vérification forcée pour ${player.riot_id}`, {
+            error: error.message,
+            status: error.response?.status ?? null,
+        });
+    } finally {
+        onMatchesChecked(player, matchIds, now);
+    }
+}
+
+// Retire des notifications à envoyer celles dont un joueur suivi manque encore
+// (gardées pour le cycle suivant), après avoir relu la liste de ces joueurs
+async function holdIncompleteGroups(pending, seenMatchIds) {
+    const groups = [
+        [pending.pendingNotifications, deferredNotifications],
+        [pending.pendingFlexNotifications, deferredFlexNotifications],
+    ];
+
+    const missingIds = new Set();
+    for (const [notifications] of groups) {
+        for (const notification of notifications.values()) {
+            for (const p of getMissingGroupPlayers(notification, seenMatchIds)) missingIds.add(p.id);
+        }
+    }
+    for (const playerId of missingIds) {
+        const player = global.db.prepare(`SELECT puuid FROM players WHERE id = ?`).get(playerId);
+        if (!player || Date.now() - getSchedule(player.puuid).lastMatchCheckAt < GROUP_RECHECK_INTERVAL) continue;
+        await forceMatchCheck(playerId, pending, seenMatchIds);
+    }
+
+    for (const [notifications, deferred] of groups) {
+        for (const [key, notification] of notifications) {
+            const missing = getMissingGroupPlayers(notification, seenMatchIds);
+            if (!missing.length) continue;
+
+            const details = {
+                guild: notification.guildId,
+                players: notification.entries.map((e) => e.player.riot_id),
+                waitingFor: missing.map((p) => p.riot_id),
+            };
+            if (Date.now() - notification.createdAt < GROUP_WAIT) {
+                if (!notification.waitLogged) {
+                    notification.waitLogged = true;
+                    logger.info("MONITOR", `Notification ${notification.matchId} retenue : attente des autres joueurs suivis`, details);
+                }
+                deferred.set(key, notification);
+                notifications.delete(key);
+            } else {
+                logger.warn("MONITOR", `Notification ${notification.matchId} envoyée sans tous les joueurs suivis (attente dépassée)`, details);
+            }
+        }
+    }
+}
+
 // ─── Boucle principale ────────────────────────────────────────────────────────
 // Lancée toutes les 30 s : seuls les joueurs dont une vérification est due font
 // un appel. Un cycle peut durer plus longtemps (traitement d'une game, rate limit) :
@@ -806,9 +900,16 @@ async function runCheckAllPlayers(client) {
     let attempted = 0;
     let errors = 0;
     const health = { ok: 0, failed: 0 };
-    const pendingNotifications = new Map();
-    const pendingFlexNotifications = new Map();
+    // Notifications retenues au cycle précédent (groupe incomplet) : les joueurs
+    // trouvés ce cycle s'y ajoutent (même clé salon + match)
+    const pendingNotifications = new Map(deferredNotifications);
+    const pendingFlexNotifications = new Map(deferredFlexNotifications);
+    deferredNotifications.clear();
+    deferredFlexNotifications.clear();
     const pendingRenames = [];
+    const pending = { pendingNotifications, pendingFlexNotifications, pendingRenames };
+    // Liste des matchs lue ce cycle, par puuid
+    const seenMatchIds = new Map();
 
     for (const player of players) {
         const now = Date.now();
@@ -833,11 +934,8 @@ async function runCheckAllPlayers(client) {
             checked = true;
             attempted++;
             hourStats.matchChecks++;
-            matchIds = await checkPlayer(player, guildEntries, flexGuildEntries, {
-                pendingNotifications,
-                pendingFlexNotifications,
-                pendingRenames,
-            });
+            matchIds = await checkPlayer(player, guildEntries, flexGuildEntries, pending);
+            seenMatchIds.set(player.puuid, matchIds);
             health.ok++;
         } catch (error) {
             errors++;
@@ -855,6 +953,9 @@ async function runCheckAllPlayers(client) {
     }
 
     await updateApiHealth(client, health);
+
+    // Duo / groupe : on attend que tous les joueurs suivis de la game soient trouvés
+    await holdIncompleteGroups(pending, seenMatchIds);
 
     await sendPendingRenames(client, pendingRenames);
     await sendPendingNotifications(client, pendingNotifications);
@@ -883,7 +984,6 @@ async function runCheckAllPlayers(client) {
 
 module.exports = {
     checkAllPlayers,
-    sendRankChangeNotification,
     getPatchVersion,
     updatePatchVersion,
     // utilisé par scripts/testFlexNotif.js (fausse notification sur le serveur de test)

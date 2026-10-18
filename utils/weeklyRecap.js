@@ -342,4 +342,4 @@ async function sendWeeklyRecap(client) {
     }
 }
 
-module.exports = { sendWeeklyRecap, generateRecapForGuild, createWeeklyRecapEmbed };
+module.exports = { sendWeeklyRecap };

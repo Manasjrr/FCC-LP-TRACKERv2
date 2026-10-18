@@ -495,4 +495,4 @@ async function generateLPGraph(playerId, maxGames = 200, opts = {}) {
     return buffer;
 }
 
-module.exports = { generateLPGraph, rankToLP, lpToLabel };
+module.exports = { generateLPGraph };

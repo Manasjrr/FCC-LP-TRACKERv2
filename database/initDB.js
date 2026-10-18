@@ -269,4 +269,4 @@ function runMigrations(db) {
     `).run();
 }
 
-module.exports = { initDB, runMigrations };
+module.exports = { initDB };

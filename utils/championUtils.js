@@ -77,4 +77,4 @@ function getChampionIconUrl(championName, patchVersion) {
     return `https://ddragon.leagueoflegends.com/cdn/${patchVersion}/img/champion/${championName}.png`;
 }
 
-module.exports = { getChampionName, getChampionIdByName, getChampionIconUrl, CHAMPION_NAMES, CHAMPION_IDS };
+module.exports = { getChampionName, getChampionIdByName, getChampionIconUrl };

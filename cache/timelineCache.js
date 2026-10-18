@@ -81,16 +81,4 @@ function getTimeline(matchId) {
     return timelineCache.get(matchId);
 }
 
-function hasTimeline(matchId) {
-    return timelineCache.has(matchId);
-}
-
-function deleteTimeline(matchId) {
-    timelineCache.delete(matchId);
-}
-
-function getSize() {
-    return timelineCache.size;
-}
-
-module.exports = { setTimeline, getTimeline, hasTimeline, deleteTimeline, getSize, compactTimeline };
+module.exports = { setTimeline, getTimeline };

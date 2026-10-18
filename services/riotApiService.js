@@ -93,11 +93,6 @@ async function getRecentMatchIds(puuid, count = 5, filter = { queue: 420 }) {
     return res.data;
 }
 
-async function getLastMatchId(puuid) {
-    const ids = await getRecentMatchIds(puuid, 1);
-    return ids[0] ?? null;
-}
-
 async function getMatch(matchId) {
     const res = await riotGet(
         `https://europe.api.riotgames.com/lol/match/v5/matches/${matchId}`
@@ -149,14 +144,12 @@ async function getActiveGame(puuid, { silent = false } = {}) {
 
 
 module.exports = {
-    riotGet,
     getAccountByRiotId,
     getSummonerByPuuid,
     getRankedDataByPuuid,
     getSoloQData,
     getFlexData,
     getRecentMatchIds,
-    getLastMatchId,
     getMatch,
     getTimeline,
     getChampionMasteries,

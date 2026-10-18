@@ -124,7 +124,6 @@ function localizeCommandData(json, lang) {
 module.exports = {
     DEFAULT_LANGUAGE,
     LANGUAGES,
-    isSupportedLanguage,
     t,
     getGuildLanguage,
     setGuildLanguage,
