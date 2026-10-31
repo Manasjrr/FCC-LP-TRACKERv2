@@ -374,4 +374,5 @@ module.exports = {
     storeTimelineStats,
     storeMatchStats,
     retryMissingTimelines,
+    syncRiotId,
 };

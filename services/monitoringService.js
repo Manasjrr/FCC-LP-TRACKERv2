@@ -6,7 +6,7 @@ const matchCache = require("../cache/matchCache");
 const timelineCache = require("../cache/timelineCache");
 const { extractMatchStats, extractEarlyDragons, extractLaneDiffs15 } = require("../utils/matchStatsUtils");
 const { isFlexEnabled, getGroupThumbnailStyle } = require("../utils/guildSettings");
-const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines } = require("./matchService");
+const { processNewMatch, fetchAndCacheTimeline, retryMissingTimelines, syncRiotId } = require("./matchService");
 const { isSameTeamGroup, sortEntriesByRole, buildMatchNotifEmbed, buildGroupMatchNotifEmbed, buildFlexMatchEmbed, buildStatsButtonRows, buildRankChangeEmbed, buildRiotIdChangeEmbed } = require("../embeds/matchEmbed");
 const { getServerPosition } = require("../utils/playerUtils");
 const { computeGameScore } = require("../utils/ratingUtils");
@@ -165,8 +165,9 @@ async function checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, 
 
     const cursorId = player.last_ranked_match_id;
     if (!cursorId || !matchIds.includes(cursorId)) {
-        await initRankedCursor(player, guildEntries, matchIds, pending);
-        return matchIds;
+        // Échec : rien n'est considéré comme vu, nouvel essai au prochain cycle
+        const initialized = await initRankedCursor(player, guildEntries, flexGuildEntries, matchIds, pending);
+        return initialized ? matchIds : [];
     }
 
     const newMatchIds = matchIds.slice(0, matchIds.indexOf(cursorId)).reverse();
@@ -204,6 +205,12 @@ async function checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, 
         currentPlayer = await processSoloQMatches(player, guildEntries, soloQIds, pending);
     }
 
+    // Pseudo : seulement si la Flex est le match le plus récent (sinon la SoloQ
+    // traitée ci-dessus a déjà synchronisé un pseudo plus récent)
+    if (flexMatches.length && flexMatches.at(-1).matchId === lastReadId) {
+        syncRiotIdFromFlex(currentPlayer, guildEntries, flexMatches.at(-1).matchInfo, pending.pendingRenames);
+    }
+
     for (const { matchId, matchInfo } of flexMatches) {
         collectFlexNotification(currentPlayer, flexGuildEntries, matchId, matchInfo, pending.pendingFlexNotifications);
     }
@@ -220,21 +227,67 @@ async function checkPlayerRankedMatches(player, guildEntries, flexGuildEntries, 
 // 1re vérification après l'activation de /flex (ou curseur trop ancien, ex. /flex
 // désactivé puis réactivé) : au lieu de lire chaque match pour connaître sa file
 // (jusqu'à 10 appels), 1 seul appel à la liste SoloQ. Les SoloQ en attente sont
-// traitées normalement ; les Flex jouées avant l'activation ne sont pas notifiées.
-async function initRankedCursor(player, guildEntries, rankedMatchIds, pending) {
-    const soloQMatchIds = await getRecentMatchIds(player.puuid, 10);
+// traitées normalement. Les matchs absents de la liste SoloQ (Flex) sont lus du
+// plus récent au plus ancien jusqu'au premier trop vieux (FLEX_MAX_AGE) : une Flex
+// qui vient de se terminer reste notifiée (sinon le joueur manquait à la
+// notification de ses coéquipiers suivis), sans rafale de vieilles games.
+// Retourne false si un match n'a pas pu être lu (curseur non initialisé)
+async function initRankedCursor(player, guildEntries, flexGuildEntries, rankedMatchIds, pending) {
+    const soloQMatchIds = (await getRecentMatchIds(player.puuid, 10)) ?? [];
 
     const newSoloQIds = [];
-    for (const matchId of soloQMatchIds ?? []) {
+    for (const matchId of soloQMatchIds) {
         if (matchId === player.last_match_id) break;
         newSoloQIds.push(matchId);
     }
+    let currentPlayer = player;
     if (newSoloQIds.length) {
-        await processSoloQMatches(player, guildEntries, newSoloQIds.reverse(), pending);
+        currentPlayer = await processSoloQMatches(player, guildEntries, newSoloQIds.reverse(), pending);
+    }
+
+    const soloQSet = new Set(soloQMatchIds);
+    const recentFlex = [];
+    for (const matchId of rankedMatchIds) {
+        if (soloQSet.has(matchId)) continue;
+        let matchInfo;
+        try {
+            matchInfo = await getMatchInfoCached(matchId);
+        } catch (error) {
+            logger.warn("MONITOR", `Erreur récupération du match ${matchId} pour ${player.riot_id}`, {
+                error: error.message,
+                status: error.response?.status ?? null,
+            });
+            return false;
+        }
+        if (Date.now() - getMatchEndTime(matchInfo) > FLEX_MAX_AGE) break;
+        if (matchInfo.queueId === FLEX_QUEUE) recentFlex.push({ matchId, matchInfo });
+    }
+
+    if (recentFlex[0]?.matchId === rankedMatchIds[0]) {
+        syncRiotIdFromFlex(currentPlayer, guildEntries, recentFlex[0].matchInfo, pending.pendingRenames);
+    }
+    for (const { matchId, matchInfo } of recentFlex.reverse()) {
+        collectFlexNotification(currentPlayer, flexGuildEntries, matchId, matchInfo, pending.pendingFlexNotifications);
     }
 
     global.db.prepare(`UPDATE players SET last_ranked_match_id = ? WHERE id = ?`).run(rankedMatchIds[0], player.id);
-    logger.info("MONITOR", `Curseur ranked initialisé pour ${player.riot_id}`, { cursor: rankedMatchIds[0] });
+    logger.info("MONITOR", `Curseur ranked initialisé pour ${currentPlayer.riot_id}`, {
+        cursor: rankedMatchIds[0],
+        flexNotified: recentFlex.map((f) => f.matchId),
+    });
+    return true;
+}
+
+// Pseudo mis à jour depuis une Flex (sinon un joueur qui ne joue qu'en Flex
+// gardait son ancien pseudo en BDD), annoncé dans chaque salon qui le suit
+function syncRiotIdFromFlex(player, guildEntries, matchInfo, pendingRenames) {
+    const participant = matchInfo.participants.find((p) => p.puuid === player.puuid);
+    if (!participant) return;
+    const riotIdChange = syncRiotId(player, participant);
+    if (!riotIdChange) return;
+    for (const guildEntry of guildEntries) {
+        pendingRenames.push({ channelId: guildEntry.channel_id, guildId: guildEntry.guild_id, ...riotIdChange });
+    }
 }
 
 // Fin de la game (ms)
