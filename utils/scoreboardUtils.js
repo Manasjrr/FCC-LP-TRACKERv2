@@ -9,7 +9,8 @@ const { getChampionName } = require("./championUtils");
 // choisies pour rester lisibles une fois l'image réduite de moitié.
 //
 // teams = [{ label, result, players: [row] }] (équipe du joueur en premier)
-// row = { participant, score: { score, tier } | null, highlight, badge: "MVP" | "ACE" | null }
+// row = { participant, score: { score, tier } | null, highlight, badge: "MVP" | "ACE" | null,
+//         rank: { text, color } | undefined }  (rank : pastille après le champion, ex. /inhouse)
 // columns = { kda, cs, damage, score } (libellés traduits), fmt = { number, perMin }
 
 const W = 1000;
@@ -122,6 +123,22 @@ function drawBadge(ctx, text, x, y) {
     drawText(ctx, text, x + w / 2, y, { font: "bold 13px Arimo, Arial, sans-serif", color: COLORS.background, align: "center" });
 }
 
+// ── Pastille de rang (facultative) ────────────────────────────────────────────
+const RANK_FONT = "bold 16px Arimo, Arial, sans-serif";
+
+function getRankPillWidth(ctx, rank) {
+    ctx.font = RANK_FONT;
+    return ctx.measureText(clean(rank.text)).width + 16;
+}
+
+function drawRankPill(ctx, rank, x, y) {
+    const w = getRankPillWidth(ctx, rank);
+    roundedRectPath(ctx, x, y - 17, w, 24, 6);
+    ctx.fillStyle = rgba(rank.color, 0.24);
+    ctx.fill();
+    drawText(ctx, rank.text, x + w / 2, y + 1, { font: RANK_FONT, color: hex(rank.color), align: "center" });
+}
+
 // ── Ligne d'un joueur ─────────────────────────────────────────────────────────
 function drawPlayerRow(ctx, row, icon, y, { teamColor, maxDamage, gameMinutes, fmt, isLast }) {
     const p = row.participant;
@@ -148,7 +165,13 @@ function drawPlayerRow(ctx, row, icon, y, { teamColor, maxDamage, gameMinutes, f
     const nameText = fitText(ctx, name, COL.kda - COL.name - (row.badge ? 70 : 16));
     drawText(ctx, nameText, COL.name, top, { font: "bold 21px Arimo, Arial, sans-serif", color: row.highlight ? COLORS.gold : COLORS.text });
     if (row.badge) drawBadge(ctx, row.badge, COL.name + ctx.measureText(nameText).width + 10, top - 1);
-    drawText(ctx, getChampionName(p.championId), COL.name, bottom, { font: "17px Arimo, Arial, sans-serif", color: COLORS.muted });
+    const championFont = "17px Arimo, Arial, sans-serif";
+    const nameColumnW = COL.kda - COL.name - 16;
+    const pillW = row.rank ? getRankPillWidth(ctx, row.rank) : 0;
+    ctx.font = championFont;
+    const championText = fitText(ctx, getChampionName(p.championId), row.rank ? nameColumnW - pillW - 10 : nameColumnW);
+    drawText(ctx, championText, COL.name, bottom, { font: championFont, color: COLORS.muted });
+    if (row.rank) drawRankPill(ctx, row.rank, COL.name + ctx.measureText(championText).width + 10, bottom - 1);
 
     // KDA
     const ratio = p.deaths === 0 ? "Perfect" : ((p.kills + p.assists) / p.deaths).toFixed(2);
